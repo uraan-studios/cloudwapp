@@ -53,7 +53,46 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onReply, 
             )}
 
             <div className="text-sm wrap-break-word whitespace-pre-wrap">
-                {message.type === 'text' ? message.content : <i className="text-gray-400">Unsupported message type</i>}
+                {(() => {
+                    if (message.type === 'text') return message.content;
+                    
+                    try {
+                        const media = JSON.parse(message.content);
+                        if (message.type === 'image') return (
+                            <div className="flex flex-col">
+                                <img 
+                                    src={`http://localhost:3000/media/${media.id}`} 
+                                    alt={media.caption || "Image"} 
+                                    className="rounded-lg max-w-[250px] max-h-[250px] object-cover"
+                                    onError={(e) => { (e.target as HTMLImageElement).src = 'https://placehold.co/200?text=Error'; }}
+                                />
+                                {media.caption && <span className="mt-1">{media.caption}</span>}
+                            </div>
+                        );
+
+                        if (message.type === 'video') return (
+                            <div className="flex flex-col">
+                                <video controls className="max-w-[250px] rounded-lg">
+                                    <source src={`http://localhost:3000/media/${media.id}`} type="video/mp4" />
+                                    Your browser does not support the video tag.
+                                </video>
+                                {media.caption && <span className="mt-1">{media.caption}</span>}
+                            </div>
+                        );
+
+                        if (message.type === 'document') return (
+                            <div className="flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded">
+                                <span className="text-2xl">📄</span>
+                                <span className="truncate max-w-[150px]">{media.filename || "Document"}</span>
+                            </div>
+                        );
+                        
+                        return <i>Media: {message.type} (ID: {media.id})</i>;
+
+                    } catch(e) {
+                         return <i className="text-gray-400">Error parsing media content</i>
+                    }
+                })()}
             </div>
             
             <div className="flex justify-end items-center gap-1 mt-1">

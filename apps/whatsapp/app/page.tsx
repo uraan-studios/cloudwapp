@@ -24,6 +24,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { Paperclip, Image as ImageIcon, FileText } from "lucide-react";
 
 // Types matching backend storage
 interface Message {
@@ -79,7 +80,66 @@ export default function Home() {
 
   const chatRef = useRef<ReturnType<typeof api.chat.subscribe>>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
   const typingTimeoutRef = useRef<NodeJS.Timeout>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [isAttachmentOpen, setIsAttachmentOpen] = useState(false);
+
+  const [attachmentDrafts, setAttachmentDrafts] = useState<{ file: File, preview: string, type: 'image' | 'video' | 'audio' | 'document', caption: string }[]>([]);
+  const [currentDraftIndex, setCurrentDraftIndex] = useState(0);
+
+  // Attachment Handlers
+  const handleAttachmentClick = (type: 'image' | 'document') => {
+      if (fileInputRef.current) {
+          const images = "image/jpeg,image/png,image/webp";
+          const videos = "video/mp4,video/3gpp";
+          fileInputRef.current.accept = type === 'image' ? `${images},${videos}` : "*/*";
+          fileInputRef.current.multiple = true;
+          fileInputRef.current.click();
+      }
+      setIsAttachmentOpen(false);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
+
+      const newDrafts = files.map(file => {
+          let type: 'image' | 'video' | 'audio' | 'document' = "document";
+          if (file.type.startsWith("image/")) type = "image";
+          else if (file.type.startsWith("video/")) type = "video";
+          else if (file.type.startsWith("audio/")) type = "audio";
+
+          return {
+              file,
+              preview: URL.createObjectURL(file),
+              type,
+              caption: ""
+          };
+      });
+
+      setAttachmentDrafts(prev => [...prev, ...newDrafts]);
+      // If we were empty, start at 0. If adding more, user stays on current or goes to new? 
+      // WhatsApp behavior: usually jumps to new. Let's keep it simple: stay if already open.
+      
+      e.target.value = "";
+  };
+
+  const removeDraft = (index: number) => {
+      setAttachmentDrafts(prev => {
+          const next = [...prev];
+          next.splice(index, 1);
+          return next;
+      });
+      if (currentDraftIndex >= index && currentDraftIndex > 0) {
+          setCurrentDraftIndex(currentDraftIndex - 1);
+      }
+  };
+  
+  const updateCaption = (text: string) => {
+      setAttachmentDrafts(prev => prev.map((d, i) => i === currentDraftIndex ? { ...d, caption: text } : d));
+  };
 
   // Auto-scroll
   // Auto-scroll to bottom only if we're not loading old messages
@@ -272,18 +332,49 @@ export default function Home() {
       }, 2000);
   };
 
-  const sendMessage = () => {
-      if (!inputText.trim() || !activeContact) return;
-      
-      chatRef.current?.send({
-          type: "text",
-          to: activeContact.id,
-          content: inputText,
-          context: replyingTo ? { message_id: replyingTo.id } : undefined
-      });
-      
-      setInputText("");
-      setReplyingTo(null);
+  const sendMessage = async () => {
+    if (attachmentDrafts.length > 0) {
+        for (const draft of attachmentDrafts) {
+             if (!activeContact) continue;
+             
+             const formData = new FormData();
+             formData.append("file", draft.file);
+
+             try {
+                const res = await fetch("http://localhost:3000/upload", { method: "POST", body: formData });
+                if (res.ok) {
+                    const data = await res.json();
+                    chatRef.current?.send({
+                        type: draft.type,
+                        to: activeContact.id,
+                        id: data.id,
+                        caption: draft.caption || "", 
+                        fileName: draft.file.name
+                    });
+                }
+             } catch(e) { console.error(e); }
+        }
+        setAttachmentDrafts([]);
+        return;
+    }
+
+    if (!inputText.trim() || !activeContact) return;
+
+    // Text Message Send Logic
+    chatRef.current?.send({
+      type: "text",
+      to: activeContact.id,
+      content: inputText,
+      context: replyingTo ? { message_id: replyingTo.id } : undefined
+    });
+    
+    setInputText("");
+    setReplyingTo(null);
+  };
+
+  // Enter key in Caption Input
+  const handleCaptionKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') sendMessage();
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -424,7 +515,7 @@ export default function Home() {
         </div>
 
         {/* Input Area */}
-        <div className="bg-[#202c33] min-h-[62px] flex flex-col px-4 py-2 gap-2">
+        <div className="bg-[#202c33] min-h-[62px] flex flex-col px-4 py-2 gap-2 relative">
             {replyingTo && (
                 <div className="bg-[#1d272d] p-2 rounded-t flex justify-between items-center border-l-4 border-teal-500">
                     <div className="flex flex-col text-sm">
@@ -434,7 +525,119 @@ export default function Home() {
                     <button onClick={() => setReplyingTo(null)} className="text-gray-400 hover:text-white">✕</button>
                 </div>
             )}
+            
+            {/* Media Editor Overlay */}
+            {attachmentDrafts.length > 0 && attachmentDrafts[currentDraftIndex] && (
+                <div className="fixed top-0 bottom-0 right-0 left-[400px] z-50 bg-[#0b141a] flex flex-col animate-in fade-in duration-200">
+                    {/* Header */}
+                    <div className="h-16 flex items-center justify-between px-4 bg-[#202c33] shrink-0">
+                        <button onClick={() => setAttachmentDrafts([])} className="text-[#e9edef] hover:bg-[#374248] p-2 rounded-full">✕</button>
+                        <span className="text-[#e9edef] font-medium truncate">{attachmentDrafts[currentDraftIndex].file.name}</span>
+                        <div className="w-8"></div> {/* Spacer */}
+                    </div>
+    
+                    {/* Main Preview */}
+                    <div className="flex-1 min-h-0 flex items-center justify-center p-8 bg-[#0b141a] relative overflow-hidden">
+                        {attachmentDrafts[currentDraftIndex].type === 'image' ? (
+                            <img src={attachmentDrafts[currentDraftIndex].preview} className="max-w-full max-h-full object-contain shadow-lg" />
+                        ) : attachmentDrafts[currentDraftIndex].type === 'video' ? (
+                            <video src={attachmentDrafts[currentDraftIndex].preview} controls className="max-w-full max-h-full object-contain shadow-lg" />
+                        ) : (
+                             <div className="flex flex-col items-center gap-4 text-gray-400">
+                                 <FileText className="w-24 h-24" />
+                                 <span>No preview available</span>
+                                 <span className="text-sm">{attachmentDrafts[currentDraftIndex].file.size} bytes</span>
+                             </div>
+                        )}
+                    </div>
+    
+                    {/* Caption Bar */}
+                    <div className="bg-[#202c33] p-2 flex justify-center shrink-0">
+                        <input 
+                            value={attachmentDrafts[currentDraftIndex].caption}
+                            onChange={(e) => updateCaption(e.target.value)}
+                            onKeyDown={handleCaptionKeyPress}
+                            placeholder="Type a caption"
+                            className="bg-[#2a3942] text-[#e9edef] rounded-lg px-4 py-2 w-full max-w-2xl text-center focus:outline-none placeholder-[#8696a0]"
+                            autoFocus
+                        />
+                    </div>
+    
+                    {/* Thumbnails & Send */}
+                    <div className="h-24 bg-[#202c33] border-t border-gray-700 flex items-center px-4 gap-2 shrink-0 overflow-x-auto pb-4 pt-2 justify-center relative">
+                        {/* Add More Button */}
+                         <button 
+                            onClick={() => fileInputRef.current?.click()}
+                            className="w-12 h-12 rounded border border-gray-600 flex items-center justify-center hover:bg-[#374248] shrink-0"
+                         >
+                            <span className="text-2xl text-gray-400">+</span>
+                         </button>
+    
+                         {/* Thumbs */}
+                         {attachmentDrafts.map((draft, i) => (
+                             <div 
+                                key={i} 
+                                onClick={() => setCurrentDraftIndex(i)}
+                                className={`w-12 h-12 rounded overflow-hidden cursor-pointer relative shrink-0 ${currentDraftIndex === i ? 'ring-2 ring-teal-500' : 'opacity-70 hover:opacity-100'}`}
+                             >
+                                 {draft.type === 'image' ? (
+                                     <img src={draft.preview} className="w-full h-full object-cover" />
+                                 ) : draft.type === 'video' ? (
+                                    <video src={draft.preview} className="w-full h-full object-cover" />
+                                 ) : (
+                                    <div className="w-full h-full bg-gray-700 flex items-center justify-center"><FileText className="w-6 h-6 text-white"/></div>
+                                 )}
+                             </div>
+                         ))}
+    
+                        <div className="absolute right-4 bottom-4">
+                             <button 
+                                onClick={sendMessage}
+                                className="bg-teal-500 hover:bg-teal-600 text-white rounded-full p-3 shadow-lg"
+                            >
+                                <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" version="1.1"><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            {/* Attachment Menu */}
+            {isAttachmentOpen && (
+                <div className="absolute bottom-16 left-4 bg-[#233138] rounded-lg shadow-lg py-2 flex flex-col gap-1 w-40 animate-in fade-in slide-in-from-bottom-2 z-20">
+                    <button 
+                        onClick={() => handleAttachmentClick('image')}
+                        className="flex items-center gap-3 px-4 py-2 hover:bg-[#182229] text-[#e9edef] text-sm"
+                    >
+                        <ImageIcon className="w-5 h-5 text-purple-500" />
+                        <span>Photos & Videos</span>
+                    </button>
+                    <button 
+                        onClick={() => handleAttachmentClick('document')}
+                        className="flex items-center gap-3 px-4 py-2 hover:bg-[#182229] text-[#e9edef] text-sm"
+                    >
+                        <FileText className="w-5 h-5 text-indigo-500" />
+                        <span>Document</span>
+                    </button>
+                </div>
+            )}
+
             <div className="flex items-center gap-2 w-full">
+                <button 
+                    onClick={() => setIsAttachmentOpen(!isAttachmentOpen)}
+                    className={`p-2 rounded-full transition-colors ${isAttachmentOpen ? "bg-[#2a3942] text-[#e9edef]" : "text-[#8696a0] hover:text-[#e9edef]"}`}
+                    title="Attach"
+                >
+                    <Paperclip className="w-6 h-6 rotate-45" />
+                </button>
+
+                <input 
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    onChange={handleFileChange}
+                />
+
                 <input 
                     value={inputText}
                     onChange={handleInputChange}

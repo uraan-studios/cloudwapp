@@ -1,12 +1,17 @@
 import "dotenv/config";
-import { appendFile } from "node:fs/promises";
+import { appendFile, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Elysia, t } from "elysia";
+import { cors } from "@elysiajs/cors";
 import { storage, type Message } from "./services/storage";
 import { meta } from "./services/meta";
 
+// Ensure temp directory exists
+const TEMP_DIR = join(import.meta.dir, "../temp_uploads");
+mkdir(TEMP_DIR, { recursive: true }).catch(console.error);
 
 const app = new Elysia()
+  .use(cors())
   .get("/", () => "Hello Elysia")
   
   // Webhook Verification (GET)
@@ -21,11 +26,58 @@ const app = new Elysia()
     return new Response("Forbidden", { status: 403 });
   })
 
+  // File Upload Endpoint
+  .post("/upload", async ({ body }) => {
+      const file = body.file as File;
+      if (!file) {
+          return new Response("No file uploaded", { status: 400 });
+      }
+
+      console.log(`[Upload] Receiving file: ${file.name}, type: ${file.type}, size: ${file.size}`);
+      
+      const tempId = crypto.randomUUID();
+      const tempPath = join(TEMP_DIR, `${tempId}_${file.name}`);
+      
+      try {
+          await Bun.write(tempPath, file);
+          console.log(`[Upload] Saved to temp: ${tempPath}`);
+          
+          const mediaId = await meta.uploadMedia(tempPath, file.type);
+          
+          // Cleanup
+          await unlink(tempPath);
+          console.log(`[Upload] Cleaned up: ${tempPath}`);
+
+          if (mediaId) {
+              return { id: mediaId };
+          } else {
+              return new Response("Failed to upload to Meta", { status: 500 });
+          }
+      } catch (e) {
+          console.error("[Upload] Error:", e);
+          return new Response("Internal Server Error", { status: 500 });
+      }
+  }, {
+      body: t.Object({
+          file: t.File()
+      })
+  })
+
+  // Media Proxy Endpoint
+  .get("/media/:id", async ({ params: { id } }) => {
+      const url = await meta.retrieveMediaUrl(id);
+      if (!url) return new Response("Not Found", { status: 404 });
+      
+      const response = await fetch(url, {
+          headers: {
+              "Authorization": `Bearer ${process.env.META_ACCESS_TOKEN}`
+          }
+      });
+      return response;
+  })
+
   // Webhook Event Handler (POST)
   .post("/webhook", async ({ body, server }: any) => {
-    console.log("Webhook Received:", JSON.stringify(body, null, 2));
-    console.log("Is Server Available for WS:", !!server);
-    
     // Log incoming webhook
     try {
       await appendFile(
@@ -64,13 +116,9 @@ const app = new Elysia()
                      try {
                          console.log("[Index] Processing reaction...");
                          await storage.addReaction(msg.reaction.message_id, from, msg.reaction.emoji);
-                         console.log("[Index] Reaction saved to storage. broadcasting...");
                          
-                         if (!server) {
-                             console.error("[Index] Server is undefined during reaction broadcast!");
-                         } else {
-                             const sent = server.publish("chat", JSON.stringify({ type: "reaction", messageId: msg.reaction.message_id, from, emoji: msg.reaction.emoji }));
-                             console.log(`[Index] Broadcast reaction to 'chat'. Clients reached: ${sent}`);
+                         if (server) {
+                             server.publish("chat", JSON.stringify({ type: "reaction", messageId: msg.reaction.message_id, from, emoji: msg.reaction.emoji }));
                          }
                      } catch (e) {
                          console.error("[Index] Error processing reaction:", e);
@@ -100,23 +148,18 @@ const app = new Elysia()
     async open(ws) {
         console.log("WS Opened");
         ws.subscribe("chat");
-        // Send initial data (Contacts only)
         try {
-            console.log("Fetching contacts for new connection...");
             const contacts = await storage.getContacts();
             ws.send(JSON.stringify({ type: "contacts", data: contacts }));
-            console.log(`Sent ${contacts.length} contacts to new client.`);
         } catch (e) {
             console.error("Error in WS open:", e);
         }
     },
     async message(ws, message: any) {
+        console.log("WS Message Received:", JSON.stringify(message));
         if (message.type === 'get_messages') {
             const { contactId, limit, beforeTimestamp } = message;
             const msgs = await storage.getMessages(contactId, limit || 50, beforeTimestamp);
-            
-            // nextCursor is the timestamp of the oldest message in this batch (first one in chronological list)
-            // If we got 0 messages, no more to load.
             const nextCursor = msgs.length > 0 ? msgs[0].timestamp : null;
             
             ws.send(JSON.stringify({ 
@@ -128,78 +171,73 @@ const app = new Elysia()
         }
         else if (message.type === 'update_contact') {
             const { contactId, name } = message;
-            console.log(`[Index] Updating contact ${contactId} with name: ${name}`);
             const result = await storage.updateContactName(contactId, name);
-            // Broadcast update to all clients (including self)
             app.server?.publish("chat", JSON.stringify({ type: "contact_update", data: result }));
         }
         else if (message.type === 'toggle_favorite') {
             const result = await storage.toggleFavorite(message.contactId);
-            app.server?.publish("chat", JSON.stringify({ type: 'contact_update', data: result })); // Reuse contact_update
+            app.server?.publish("chat", JSON.stringify({ type: 'contact_update', data: result })); 
         }
         // Handle outgoing messages
-        if (message.type === "text") {
+        else if (["text", "image", "video", "audio", "document"].includes(message.type)) {
+            let content = "";
+            if (message.type === "text") {
+                content = message.content;
+            } else {
+                // For media, content is stringified JSON of metadata (id, caption, filename)
+                content = JSON.stringify({
+                    id: message.id,
+                    caption: message.caption,
+                    filename: message.fileName
+                });
+            }
+
             const outgoingMsg: Message = {
-                id: "wamid_" + Date.now(), // Temp ID until Meta confirms
+                id: "wamid_" + Date.now(), 
                 from: "me",
                 to: message.to,
-                type: "text",
-                content: message.content,
+                type: message.type,
+                content: content,
                 timestamp: Date.now(),
                 status: "sent",
                 direction: "outgoing",
-                context: message.context // Pass replying context if any
+                context: message.context 
             };
             
             await storage.saveMessage(outgoingMsg);
+            // Broadcast to self and others
             ws.publish("chat", JSON.stringify({ type: "message", data: outgoingMsg }));
             ws.send(JSON.stringify({ type: "message", data: outgoingMsg })); 
             
-            ws.send(JSON.stringify({ type: "message", data: outgoingMsg })); 
-            
             // Send to Meta
-            const res = await meta.sendMessage(message.to, { type: "text", content: message.content }, message.context);
+            const res = await meta.sendMessage(message.to, { 
+                type: message.type, 
+                content: message.content, // Text content
+                id: message.id,           // Media ID
+                caption: message.caption,
+                fileName: message.fileName
+            }, message.context);
 
-            // Log sent message
-            try {
-                await appendFile(
-                    join(import.meta.dir, "../data/sent.json"),
-                    JSON.stringify({ timestamp: new Date().toISOString(), to: message.to, content: message.content, response: res }) + "\n"
-                );
-            } catch (err) {
-                console.error("Failed to log sent message:", err);
-            }
-            
             if (res && res.messages && res.messages[0]) {
                 const realId = res.messages[0].id;
-                console.log(`[Index] Received real ID from Meta: ${realId} for temp ID: ${outgoingMsg.id}`);
+                console.log(`[Index] Received real ID: ${realId}`);
                 await storage.updateMessageId(outgoingMsg.id, realId);
                 ws.publish("chat", JSON.stringify({ type: "id_update", oldId: outgoingMsg.id, newId: realId }));
                 ws.send(JSON.stringify({ type: "id_update", oldId: outgoingMsg.id, newId: realId }));
-            } else {
-                console.error("[Index] Failed to get real ID from Meta response:", JSON.stringify(res));
             }
         }
         else if (message.type === "typing") {
-            // Client says "I am typing" -> Send to Meta
             await meta.sendTypingState(message.to, message.state ? "typing_on" : "typing_off");
-            // Do NOT broadcast to other clients for now, or maybe yes if we multiple agents support later
         }
         else if (message.type === "reaction") {
-            // Client sent a reaction
             await meta.sendReaction(message.messageId, message.emoji, message.to);
-            // Broadcast to other clients/self?
-            // Ideally we also save it to DB. For now let's just broadcast back so UI updates for everyone.
-            // But UI already optimistically updated.
-            // Let's verify if we need to save. Yes, reactions are part of persistent state.
             await storage.addReaction(message.messageId, "me", message.emoji);
             ws.publish("chat", JSON.stringify({ type: "reaction", messageId: message.messageId, from: "me", emoji: message.emoji }));
         }
         else if (message.type === "read") {
-            // Client says "I read message X" -> Send to Meta
             await meta.markAsRead(message.messageId);
             await storage.updateMessageStatus(message.messageId, 'read');
-             ws.publish("chat", JSON.stringify({ type: "status", id: message.messageId, status: 'read' }));
+            ws.publish("chat", JSON.stringify({ type: "status", id: message.messageId, status: 'read' }));
         }
     },
   })

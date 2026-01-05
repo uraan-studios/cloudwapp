@@ -4,6 +4,17 @@ import { useEffect, useState, useRef } from "react";
 import { api } from "../lib/eden-client";
 import { ChatLayout } from "../components/chat-layout";
 import { MessageBubble } from "../components/message-bubble";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 // Types matching backend storage
 interface Message {
@@ -21,6 +32,8 @@ interface Message {
 interface Contact {
   id: string;
   name?: string;
+  pushName?: string;
+  customName?: string;
   lastMessage?: Message;
 }
 
@@ -43,6 +56,10 @@ export default function Home() {
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  
+  // Rename Dialog State
+  const [isRenameOpen, setIsRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
 
   const chatRef = useRef<ReturnType<typeof api.chat.subscribe>>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -151,6 +168,12 @@ export default function Home() {
       } else if (type === "id_update") {
           const { oldId, newId } = data || response;
           setMessages(prev => prev.map(m => m.id === oldId ? { ...m, id: newId } : m));
+      } else if (type === "contact_update") {
+          const { id, customName } = data || data.data || response.data;
+          setContacts(prev => prev.map(c => c.id === id ? { ...c, customName } : c));
+          if (activeContactRef.current?.id === id) {
+              setActiveContact(prev => prev ? { ...prev, customName } : prev);
+          }
       }
     });
 
@@ -249,6 +272,28 @@ export default function Home() {
       chatRef.current?.send({ type: "reaction", to: activeContact.id, messageId: id, emoji });
   };
 
+  const handleRenameClick = () => {
+    if (!activeContact) return;
+    const currentName = activeContact.customName || activeContact.pushName || activeContact.name || activeContact.id;
+    setRenameValue(currentName);
+    setIsRenameOpen(true);
+  };
+
+  const submitRename = () => {
+    if (!activeContact) return;
+    if (renameValue && renameValue !== (activeContact.customName || activeContact.pushName || activeContact.name || activeContact.id)) {
+        // Optimistic update
+        const updated = { ...activeContact, customName: renameValue };
+        setActiveContact(updated);
+        setContacts(prev => prev.map(c => c.id === activeContact.id ? updated : c));
+        
+        chatRef.current?.send({ type: 'update_contact', contactId: activeContact.id, name: renameValue });
+    }
+    setIsRenameOpen(false);
+  };
+
+  const getDisplayName = (c: Contact) => c.customName || c.pushName || c.name || c.id;
+
   const renderSidebar = (
       <div className="flex flex-col">
           {contacts.length === 0 && <div className="p-4 text-gray-400 text-sm">No contacts</div>}
@@ -263,7 +308,7 @@ export default function Home() {
                   </div>
                   <div className="flex-1 border-b border-[#202c33] pb-3">
                       <div className="flex justify-between items-baseline">
-                          <span className="text-[#e9edef] text-base">{c.name || c.id}</span>
+                          <span className="text-[#e9edef] text-base">{getDisplayName(c)}</span>
                           <span className="text-[#8696a0] text-xs">
                               {c.lastMessage && new Date(c.lastMessage.timestamp).toLocaleDateString()}
                           </span>
@@ -285,7 +330,12 @@ export default function Home() {
                  {activeContact.id.slice(-2)}
              </div> 
              <div className="flex flex-col">
-                 <span className="text-[#e9edef] font-medium">{activeContact.name || activeContact.id}</span>
+                 <div className="flex items-center gap-2">
+                     <span className="text-[#e9edef] font-medium">{getDisplayName(activeContact)}</span>
+                     <button onClick={handleRenameClick} className="text-gray-500 hover:text-white text-xs opacity-50 hover:opacity-100" title="Rename Contact">
+                        ✎
+                     </button>
+                 </div>
                  <span className="text-[#8696a0] text-xs">{status}</span>
              </div>
         </div>
@@ -347,6 +397,37 @@ export default function Home() {
       </div>
   );
 
-  return <ChatLayout sidebar={renderSidebar} activeChat={renderChat} isConnected={status === "Connected"} />;
+  return (
+    <>
+      <ChatLayout sidebar={renderSidebar} activeChat={renderChat} isConnected={status === "Connected"} />
+      <Dialog open={isRenameOpen} onOpenChange={setIsRenameOpen}>
+        <DialogContent className="sm:max-w-[425px] bg-[#202c33] border-gray-700 text-[#e9edef]">
+          <DialogHeader>
+            <DialogTitle>Rename Contact</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Set a custom name for this contact. This will be visible only to you.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="name" className="text-right text-gray-300">
+                Name
+              </Label>
+              <Input
+                id="name"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                className="col-span-3 bg-[#2a3942] border-gray-600 text-[#e9edef] focus-visible:ring-offset-0"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setIsRenameOpen(false)} className="bg-gray-600 hover:bg-gray-700 text-white border-0">Cancel</Button>
+            <Button type="submit" onClick={submitRename} className="bg-[#00a884] hover:bg-[#008f6f] text-white">Save changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
 

@@ -15,7 +15,9 @@ export const db = new Database(DB_PATH);
 db.run(`
   CREATE TABLE IF NOT EXISTS contacts (
     id TEXT PRIMARY KEY,
-    name TEXT
+    name TEXT,
+    push_name TEXT,
+    custom_name TEXT
   )
 `);
 
@@ -41,3 +43,8 @@ db.run(`
     PRIMARY KEY (message_id, from_id)
   )
 `);
+
+// Migrations
+try { db.run("ALTER TABLE contacts ADD COLUMN push_name TEXT"); } catch (e) {}
+try { db.run("ALTER TABLE contacts ADD COLUMN custom_name TEXT"); } catch (e) {}
+

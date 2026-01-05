@@ -17,6 +17,8 @@ export interface Message {
 export interface Contact {
   id: string;
   name?: string;
+  pushName?: string;
+  customName?: string;
   lastMessage?: Message;
 }
 
@@ -28,7 +30,11 @@ export const storage = {
     `);
 
     const insertContact = db.prepare(`
-        INSERT OR IGNORE INTO contacts (id, name) VALUES ($id, $name)
+        INSERT INTO contacts (id, name, push_name, custom_name) 
+        VALUES ($id, $name, $pushName, $customName)
+        ON CONFLICT(id) DO UPDATE SET 
+            push_name = COALESCE(excluded.push_name, push_name),
+            name = COALESCE(excluded.name, name)
     `);
 
     // We can update name if needed, but for now just ensure contact exists
@@ -48,7 +54,13 @@ export const storage = {
         });
 
         const contactId = message.direction === 'incoming' ? message.from : message.to;
-        insertContact.run({ $id: contactId, $name: contactId });
+        // We minimally insert contact to ensure existence, preserve existing names
+        insertContact.run({ 
+            $id: contactId, 
+            $name: contactId, 
+            $pushName: null, 
+            $customName: null 
+        });
     })();
     
     console.log(`[Storage] Saved message: ${message.id} (${message.direction})`);
@@ -152,13 +164,32 @@ export const storage = {
          return {
              id: c.id,
              name: c.name,
+             pushName: c.push_name,
+             customName: c.custom_name,
              lastMessage: lm
          };
     });
     
-    // Filter out contacts with no messages if desired, or keep them.
     // Sort by last message time
     return result.sort((a, b) => (b.lastMessage?.timestamp || 0) - (a.lastMessage?.timestamp || 0));
+  },
+
+  async saveContact(id: string, pushName: string) {
+      const stmt = db.prepare(`
+        INSERT INTO contacts (id, push_name) VALUES ($id, $pushName)
+        ON CONFLICT(id) DO UPDATE SET push_name = $pushName
+      `);
+      stmt.run({ $id: id, $pushName: pushName });
+  },
+
+  async updateContactName(id: string, name: string) {
+      const stmt = db.prepare(`
+        UPDATE contacts SET custom_name = $name WHERE id = $id
+      `);
+      stmt.run({ $id: id, $name: name });
+      
+      // Return updated contact info partial
+      return { id, customName: name };
   },
 
   async updateMessageStatus(id: string, status: Message['status']) {

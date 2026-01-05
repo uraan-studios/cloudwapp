@@ -39,6 +39,11 @@ const app = new Elysia()
     if (body.object === "whatsapp_business_account") {
       for (const entry of body.entry) {
         for (const change of entry.changes) {
+          if (change.value.contacts) {
+              for (const contact of change.value.contacts) {
+                  await storage.saveContact(contact.wa_id, contact.profile.name);
+              }
+          }
           if (change.value.messages) {
              for (const msg of change.value.messages) {
                  const from = msg.from;
@@ -120,6 +125,13 @@ const app = new Elysia()
                 data: msgs,
                 nextCursor
             }));
+        }
+        else if (message.type === 'update_contact') {
+            const { contactId, name } = message;
+            console.log(`[Index] Updating contact ${contactId} with name: ${name}`);
+            const result = await storage.updateContactName(contactId, name);
+            // Broadcast update to all clients (including self)
+            app.server?.publish("chat", JSON.stringify({ type: "contact_update", data: result }));
         }
         // Handle outgoing messages
         if (message.type === "text") {

@@ -28,19 +28,58 @@ export default function Home() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
+  const activeContactRef = useRef<Contact | null>(null);
+
+  // Sync ref with state
+  useEffect(() => {
+    activeContactRef.current = activeContact;
+  }, [activeContact]);
   const [inputText, setInputText] = useState("");
   const [status, setStatus] = useState("Disconnected");
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [isTyping, setIsTyping] = useState(false);
+  
+  // Pagination State
+  const [nextCursor, setNextCursor] = useState<number | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
 
   const chatRef = useRef<ReturnType<typeof api.chat.subscribe>>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout>(null);
 
   // Auto-scroll
+  // Auto-scroll to bottom only if we're not loading old messages
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, activeContact]);
+    if (!isLoadingMore) {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, activeContact, isLoadingMore]);
+
+  // Initial Load when Contact Changes
+  useEffect(() => {
+    if (activeContact && chatRef.current) {
+        setMessages([]); // Clear previous messages
+        setHasMore(true); // Reset hasMore assuming there's content
+        setNextCursor(null);
+        chatRef.current.send({ type: 'get_messages', contactId: activeContact.id, limit: 50 });
+    }
+  }, [activeContact?.id]);
+
+  // Infinite Scroll Handler
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+      const { scrollTop } = e.currentTarget;
+      if (scrollTop === 0 && hasMore && !isLoadingMore && activeContact && nextCursor) {
+          setIsLoadingMore(true);
+          console.log("Loading more messages before:", nextCursor);
+          chatRef.current?.send({ 
+              type: 'get_messages', 
+              contactId: activeContact.id, 
+              limit: 50, 
+              beforeTimestamp: nextCursor 
+          });
+      }
+  };
 
   useEffect(() => {
     const chat = api.chat.subscribe();
@@ -54,12 +93,35 @@ export default function Home() {
 
       if (type === "contacts") {
         setContacts(data.data || data); 
+      } else if (type === "messages_loaded") {
+          const { contactId, data: loadedMsgs, nextCursor: newCursor } = data || response;
+          // Only update if it's for current contact
+          const currentContact = activeContactRef.current;
+          if (currentContact && contactId === currentContact.id) {
+              setMessages(prev => {
+                  // If we have previous messages and this load is "older" (based on no overlap or just logic),
+                  // verify if it's a prepend or replace.
+                  // Simplest logic: If we sort by timestamp, merging is safe.
+                  // But to keep scroll position, we assume loadedMsgs are OLDER than prev.
+                  const merged = [...prev, ...loadedMsgs]; 
+                  // Deduplicate just in case
+                  const unique = Array.from(new Map(merged.map(m => [m.id, m])).values());
+                  return unique.sort((a,b) => a.timestamp - b.timestamp);
+              });
+              setNextCursor(newCursor);
+              setHasMore(!!newCursor);
+              setIsLoadingMore(false);
+          }
       } else if (type === "message") {
         const msg = data.data || data; 
-        setMessages((prev) => {
-            if(prev.find(m => m.id === msg.id)) return prev;
-            return [...prev, msg].sort((a,b) => a.timestamp - b.timestamp);
-        });
+        // Only append if it belongs to active chat
+        const currentContact = activeContactRef.current;
+        if (currentContact && (msg.from === currentContact.id || msg.to === currentContact.id)) {
+             setMessages((prev) => {
+                if(prev.find(m => m.id === msg.id)) return prev;
+                return [...prev, msg].sort((a,b) => a.timestamp - b.timestamp);
+            });
+        }
         
         setContacts(prev => {
             const list = [...prev];
@@ -229,7 +291,11 @@ export default function Home() {
         </div>
         
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 xl:px-20 bg-[#0b141a]">
+        <div 
+            className="flex-1 overflow-y-auto custom-scrollbar p-4 xl:px-20 bg-[#0b141a]"
+            onScroll={handleScroll}
+        >
+            {isLoadingMore && <div className="text-center text-xs text-gray-500 py-2">Loading more...</div>}
             {activeMessages.length === 0 && (
                 <div className="text-center text-[#8696a0] mt-10 text-sm">
                     This is the start of your conversation with {activeContact.id}
@@ -281,6 +347,6 @@ export default function Home() {
       </div>
   );
 
-  return <ChatLayout sidebar={renderSidebar} activeChat={renderChat} />;
+  return <ChatLayout sidebar={renderSidebar} activeChat={renderChat} isConnected={status === "Connected"} />;
 }
 

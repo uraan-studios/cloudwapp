@@ -93,15 +93,34 @@ const app = new Elysia()
     body: t.Any(),
     response: t.Any(),
     async open(ws) {
+        console.log("WS Opened");
         ws.subscribe("chat");
-        // Send initial data
-        const contacts = await storage.getContacts();
-        ws.send(JSON.stringify({ type: "contacts", data: contacts }));
-        
-        const messages = await storage.getAllMessages();
-        ws.send(JSON.stringify({ type: "messages", data: messages }));
+        // Send initial data (Contacts only)
+        try {
+            console.log("Fetching contacts for new connection...");
+            const contacts = await storage.getContacts();
+            ws.send(JSON.stringify({ type: "contacts", data: contacts }));
+            console.log(`Sent ${contacts.length} contacts to new client.`);
+        } catch (e) {
+            console.error("Error in WS open:", e);
+        }
     },
     async message(ws, message: any) {
+        if (message.type === 'get_messages') {
+            const { contactId, limit, beforeTimestamp } = message;
+            const msgs = await storage.getMessages(contactId, limit || 50, beforeTimestamp);
+            
+            // nextCursor is the timestamp of the oldest message in this batch (first one in chronological list)
+            // If we got 0 messages, no more to load.
+            const nextCursor = msgs.length > 0 ? msgs[0].timestamp : null;
+            
+            ws.send(JSON.stringify({ 
+                type: 'messages_loaded', 
+                contactId, 
+                data: msgs,
+                nextCursor
+            }));
+        }
         // Handle outgoing messages
         if (message.type === "text") {
             const outgoingMsg: Message = {

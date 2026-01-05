@@ -79,6 +79,16 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onReply, 
                                 {media.caption && <span className="mt-1">{media.caption}</span>}
                             </div>
                         );
+                        
+                        if (message.type === 'audio') return (
+                             <div className="flex items-center gap-2 p-2 min-w-[200px]">
+                                 <audio controls className="w-full h-8">
+                                     <source src={`http://localhost:3000/media/${media.id}`} type="audio/webm" />
+                                     <source src={`http://localhost:3000/media/${media.id}`} type="audio/mp4" />
+                                     Your browser does not support the audio tag.
+                                 </audio>
+                             </div>
+                        );
 
                         if (message.type === 'document') return (
                             <div className="flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded">

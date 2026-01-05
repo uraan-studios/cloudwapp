@@ -40,7 +40,7 @@ export const meta = {
     }
   },
 
-  async sendMessage(to: string, message: { type: "text" | "image" | "audio" | "video" | "document" | "template", content: string | any, id?: string, caption?: string, fileName?: string }, context?: { message_id: string }) {
+  async sendMessage(to: string, message: { type: "text" | "image" | "audio" | "video" | "document" | "template", content: string | any, id?: string, caption?: string, fileName?: string, isVoiceNote?: boolean }, context?: { message_id: string }) {
     const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
     const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
 
@@ -66,12 +66,21 @@ export const meta = {
     else if (["image", "audio", "video", "document"].includes(message.type)) {
         body.type = message.type;
         const mediaPayload: any = {
-            id: message.id, // ID from uploadMedia
-            caption: message.caption
+            id: message.id
         };
+        
+        // Caption is supported for image, video, document ONLY
+        if (["image", "video", "document"].includes(message.type)) {
+             mediaPayload.caption = message.caption;
+        }
         
         if (message.type === 'document' && message.fileName) {
             mediaPayload.filename = message.fileName;
+        }
+
+        // Voice Note specific flag
+        if (message.type === 'audio' && message.isVoiceNote) {
+            mediaPayload.voice = true;
         }
 
         body[message.type] = mediaPayload;

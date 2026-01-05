@@ -27,6 +27,7 @@ const app = new Elysia()
   })
 
   // File Upload Endpoint
+  // File Upload Endpoint
   .post("/upload", async ({ body }) => {
       const file = body.file as File;
       if (!file) {
@@ -37,17 +38,33 @@ const app = new Elysia()
       
       const tempId = crypto.randomUUID();
       const tempPath = join(TEMP_DIR, `${tempId}_${file.name}`);
+      await Bun.write(tempPath, file);
+      
+      let uploadPath = tempPath;
+      let mimeType = file.type;
+
+      // Convert WebM audio to OGG for WhatsApp compatibility
+      if (file.type === 'audio/webm' || file.type === 'video/webm') {
+          try {
+              console.log("Converting WebM to OGG...", tempPath);
+              const { convertToOgg } = await import('./services/converter');
+              uploadPath = await convertToOgg(tempPath);
+              mimeType = 'audio/ogg'; // Update MIME for Meta
+          } catch (e) {
+              console.error("Conversion failed, attempting upload of original:", e);
+          }
+      }
       
       try {
-          await Bun.write(tempPath, file);
-          console.log(`[Upload] Saved to temp: ${tempPath}`);
+          console.log(`[Upload] Uploading to Meta: ${uploadPath} (${mimeType})`);
+          const mediaId = await meta.uploadMedia(uploadPath, mimeType);
           
-          const mediaId = await meta.uploadMedia(tempPath, file.type);
+          // Cleanup - DISABLED per user request
+          // unlink(uploadPath).catch(() => {});
+          // if (uploadPath !== tempPath) {
+          //    unlink(tempPath).catch(() => {});
+          // }
           
-          // Cleanup
-          await unlink(tempPath);
-          console.log(`[Upload] Cleaned up: ${tempPath}`);
-
           if (mediaId) {
               return { id: mediaId };
           } else {

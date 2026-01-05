@@ -24,7 +24,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Paperclip, Image as ImageIcon, FileText } from "lucide-react";
+import { Paperclip, Image as ImageIcon, FileText, Mic } from "lucide-react";
 
 // Types matching backend storage
 interface Message {
@@ -83,6 +83,11 @@ export default function Home() {
 
   const typingTimeoutRef = useRef<NodeJS.Timeout>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
   
   const [isAttachmentOpen, setIsAttachmentOpen] = useState(false);
 
@@ -136,6 +141,85 @@ export default function Home() {
           setCurrentDraftIndex(currentDraftIndex - 1);
       }
   };
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const startRecording = async () => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                audioChunksRef.current.push(event.data);
+            }
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+        setRecordingDuration(0);
+    } catch (e) {
+        console.error("Error starting recording:", e);
+        alert("Could not access microphone.");
+    }
+  };
+
+  const stopAndSendRecording = () => {
+      if (mediaRecorderRef.current && isRecording) {
+          mediaRecorderRef.current.onstop = async () => {
+              const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); // Default browser format
+              const audioFile = new File([audioBlob], "voice_note.webm", { type: 'audio/webm' });
+              
+              // Upload Logic
+              const formData = new FormData();
+              formData.append("file", audioFile);
+
+              try {
+                  const res = await fetch("http://localhost:3000/upload", { method: "POST", body: formData });
+                  if (res.ok) {
+                      const data = await res.json();
+                      chatRef.current?.send({
+                          type: "audio",
+                          to: activeContact!.id,
+                          id: data.id,
+                          caption: "",
+                          fileName: "voice_note.webm",
+                          isVoiceNote: true
+                      });
+                  }
+              } catch (e) { console.error(e); }
+              
+              // Cleanup tracks
+              mediaRecorderRef.current?.stream.getTracks().forEach(track => track.stop());
+          };
+          mediaRecorderRef.current.stop();
+          setIsRecording(false);
+      }
+  };
+
+  const cancelRecording = () => {
+      if (mediaRecorderRef.current && isRecording) {
+          mediaRecorderRef.current.stop();
+          mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+          setIsRecording(false);
+      }
+  };
+
+  // Recording Timer
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isRecording) {
+        interval = setInterval(() => {
+            setRecordingDuration(prev => prev + 1);
+        }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isRecording]);
   
   const updateCaption = (text: string) => {
       setAttachmentDrafts(prev => prev.map((d, i) => i === currentDraftIndex ? { ...d, caption: text } : d));
@@ -637,20 +721,46 @@ export default function Home() {
                     className="hidden"
                     onChange={handleFileChange}
                 />
-
-                <input 
-                    value={inputText}
-                    onChange={handleInputChange}
-                    onKeyDown={handleKeyPress}
-                    placeholder="Type a message"
-                    className="flex-1 bg-[#2a3942] text-[#e9edef] rounded-lg px-4 py-2 text-sm focus:outline-none placeholder-[#8696a0]"
-                />
-                <button 
-                    onClick={sendMessage}
-                    className="p-2 rounded-full hover:bg-[#2a3942] text-[#8696a0] transition-colors"
-                >
-                    <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" className="" version="1.1" x="0px" y="0px" enableBackground="new 0 0 24 24"><title>send</title><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg>
-                </button>
+                
+                {isRecording ? (
+                    <div className="flex-1 flex items-center gap-4 bg-[#2a3942] rounded-lg px-4 py-2 animate-in fade-in">
+                        <span className="text-red-500 animate-pulse">● Rec</span>
+                        <span className="text-[#e9edef] flex-1 text-center">
+                            {formatTime(recordingDuration)}
+                        </span>
+                        <button onClick={cancelRecording} className="text-red-400 hover:text-red-300">
+                             ✕
+                        </button>
+                        <button onClick={stopAndSendRecording} className="text-green-400 hover:text-green-300">
+                             <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" version="1.1"><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg>
+                        </button>
+                    </div>
+                ) : (
+                    <>
+                        <input 
+                            value={inputText}
+                            onChange={handleInputChange}
+                            onKeyDown={handleKeyPress}
+                            placeholder="Type a message"
+                            className="flex-1 bg-[#2a3942] text-[#e9edef] rounded-lg px-4 py-2 text-sm focus:outline-none placeholder-[#8696a0]"
+                        />
+                        {inputText.trim() ? (
+                            <button 
+                                onClick={sendMessage}
+                                className="p-2 rounded-full hover:bg-[#2a3942] text-[#8696a0] transition-colors"
+                            >
+                                <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" className="" version="1.1" x="0px" y="0px" enableBackground="new 0 0 24 24"><title>send</title><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg>
+                            </button>
+                        ) : (
+                            <button 
+                                onClick={startRecording}
+                                className="p-2 rounded-full hover:bg-[#2a3942] text-[#8696a0] transition-colors"
+                            >
+                                <Mic className="w-6 h-6" />
+                            </button>
+                        )}
+                    </>
+                )}
             </div>
         </div>
       </>

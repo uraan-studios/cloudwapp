@@ -19,8 +19,10 @@ export interface Contact {
   name?: string;
   pushName?: string;
   customName?: string;
+  isFavorite?: boolean;
   lastMessage?: Message;
 }
+
 
 export const storage = {
   async saveMessage(message: Message) {
@@ -166,6 +168,7 @@ export const storage = {
              name: c.name,
              pushName: c.push_name,
              customName: c.custom_name,
+             isFavorite: !!c.is_favorite,
              lastMessage: lm
          };
     });
@@ -190,6 +193,14 @@ export const storage = {
       
       // Return updated contact info partial
       return { id, customName: name };
+  },
+
+  async toggleFavorite(id: string) {
+      const contact = db.prepare("SELECT is_favorite FROM contacts WHERE id = $id").get({ $id: id }) as any;
+      const newValue = contact?.is_favorite ? 0 : 1;
+      
+      db.prepare("UPDATE contacts SET is_favorite = $val WHERE id = $id").run({ $val: newValue, $id: id });
+      return { id, isFavorite: !!newValue };
   },
 
   async updateMessageStatus(id: string, status: Message['status']) {

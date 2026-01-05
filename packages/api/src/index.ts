@@ -133,6 +133,10 @@ const app = new Elysia()
             // Broadcast update to all clients (including self)
             app.server?.publish("chat", JSON.stringify({ type: "contact_update", data: result }));
         }
+        else if (message.type === 'toggle_favorite') {
+            const result = await storage.toggleFavorite(message.contactId);
+            app.server?.publish("chat", JSON.stringify({ type: 'contact_update', data: result })); // Reuse contact_update
+        }
         // Handle outgoing messages
         if (message.type === "text") {
             const outgoingMsg: Message = {

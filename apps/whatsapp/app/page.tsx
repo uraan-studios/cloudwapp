@@ -15,6 +15,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { SearchBar } from "../components/sidebar/search-bar";
+import { TabsList } from "../components/sidebar/tabs-list";
+// Context Menu
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 // Types matching backend storage
 interface Message {
@@ -34,6 +43,7 @@ interface Contact {
   name?: string;
   pushName?: string;
   customName?: string;
+  isFavorite?: boolean;
   lastMessage?: Message;
 }
 
@@ -61,6 +71,12 @@ export default function Home() {
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
 
+  // Search & Tabs State
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState("all");
+
+
+
   const chatRef = useRef<ReturnType<typeof api.chat.subscribe>>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout>(null);
@@ -82,6 +98,8 @@ export default function Home() {
         chatRef.current.send({ type: 'get_messages', contactId: activeContact.id, limit: 50 });
     }
   }, [activeContact?.id]);
+  
+
 
   // Infinite Scroll Handler
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -174,8 +192,10 @@ export default function Home() {
           if (activeContactRef.current?.id === id) {
               setActiveContact(prev => prev ? { ...prev, customName } : prev);
           }
-      }
+
+      } 
     });
+
 
     chat.on("open", () => {
       setStatus("Connected");
@@ -195,6 +215,25 @@ export default function Home() {
   const activeMessages = messages.filter(
       m => (activeContact && (m.from === activeContact.id || m.to === activeContact.id))
   );
+  
+  // Filter Contacts based on Search and Tabs
+  const getDisplayName = (c: Contact) => c.customName || c.pushName || c.name || c.id;
+
+  const filteredContacts = contacts.filter(c => {
+      // 1. Search Filter
+      if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          const name = getDisplayName(c).toLowerCase();
+          const num = c.id.toLowerCase();
+          if (!name.includes(q) && !num.includes(q)) return false;
+      }
+
+      // 2. Tab Filter
+      if (activeTab === 'all') return true;
+      if (activeTab === 'favs') return c.isFavorite;
+      
+      return true;
+  });
 
   // Read Receipts Logic
   useEffect(() => {
@@ -292,33 +331,55 @@ export default function Home() {
     setIsRenameOpen(false);
   };
 
-  const getDisplayName = (c: Contact) => c.customName || c.pushName || c.name || c.id;
+
+  
+  const toggleFavorite = (c: Contact) => {
+      // Optimistic
+      setContacts(prev => prev.map(con => con.id === c.id ? { ...con, isFavorite: !con.isFavorite } : con));
+      chatRef.current?.send({ type: 'toggle_favorite', contactId: c.id });
+  };
 
   const renderSidebar = (
-      <div className="flex flex-col">
-          {contacts.length === 0 && <div className="p-4 text-gray-400 text-sm">No contacts</div>}
-          {contacts.map(c => (
-              <div 
-                key={c.id} 
-                onClick={() => setActiveContact(c)}
-                className={`flex items-center p-3 cursor-pointer hover:bg-[#202c33] ${activeContact?.id === c.id ? 'bg-[#2a3942]' : ''}`}
-              >
-                  <div className="w-10 h-10 rounded-full bg-gray-500 mr-3 flex items-center justify-center text-white text-xs">
-                      {c.id.slice(-2)}
-                  </div>
-                  <div className="flex-1 border-b border-[#202c33] pb-3">
-                      <div className="flex justify-between items-baseline">
-                          <span className="text-[#e9edef] text-base">{getDisplayName(c)}</span>
-                          <span className="text-[#8696a0] text-xs">
-                              {c.lastMessage && new Date(c.lastMessage.timestamp).toLocaleDateString()}
-                          </span>
+      <div className="flex flex-col h-full">
+          <SearchBar value={searchQuery} onChange={setSearchQuery} />
+          <TabsList 
+              activeTab={activeTab} 
+              onTabChange={setActiveTab} 
+          />
+          <div className="overflow-y-auto flex-1 custom-scrollbar">
+              {filteredContacts.length === 0 && <div className="p-4 text-gray-400 text-sm">No chats found</div>}
+              {filteredContacts.map(c => (
+                  <ContextMenu key={c.id}>
+                    <ContextMenuTrigger>
+                      <div 
+                        onClick={() => setActiveContact(c)}
+                        className={`flex items-center p-3 cursor-pointer hover:bg-[#202c33] ${activeContact?.id === c.id ? 'bg-[#2a3942]' : ''}`}
+                      >
+                          <div className="w-10 h-10 rounded-full bg-gray-500 mr-3 flex items-center justify-center text-white text-xs relative">
+                              {c.id.slice(-2)}
+                              {c.isFavorite && <span className="absolute -top-1 -right-1 text-xs">⭐</span>}
+                          </div>
+                          <div className="flex-1 border-b border-[#202c33] pb-3">
+                              <div className="flex justify-between items-baseline">
+                                  <span className="text-[#e9edef] text-base">{getDisplayName(c)}</span>
+                                  <span className="text-[#8696a0] text-xs">
+                                      {c.lastMessage && new Date(c.lastMessage.timestamp).toLocaleDateString()}
+                                  </span>
+                              </div>
+                              <div className="text-[#8696a0] text-sm truncate">
+                                  {c.lastMessage?.type === 'text' ? c.lastMessage.content : <i>{c.lastMessage?.type}</i>}
+                              </div>
+                          </div>
                       </div>
-                      <div className="text-[#8696a0] text-sm truncate">
-                          {c.lastMessage?.type === 'text' ? c.lastMessage.content : <i>{c.lastMessage?.type}</i>}
-                      </div>
-                  </div>
-              </div>
-          ))}
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="bg-[#202c33] border-gray-700 text-white">
+                        <ContextMenuItem onClick={() => toggleFavorite(c)} className="hover:bg-[#2a3942]">
+                            {c.isFavorite ? "Unfavorite" : "Favorite"}
+                        </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
+              ))}
+          </div>
       </div>
   );
 
@@ -427,6 +488,8 @@ export default function Home() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+
     </>
   );
 }

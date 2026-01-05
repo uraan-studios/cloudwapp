@@ -17,7 +17,8 @@ db.run(`
     id TEXT PRIMARY KEY,
     name TEXT,
     push_name TEXT,
-    custom_name TEXT
+    custom_name TEXT,
+    is_favorite INTEGER DEFAULT 0
   )
 `);
 
@@ -44,7 +45,27 @@ db.run(`
   )
 `);
 
+// db.run(`
+//   CREATE TABLE IF NOT EXISTS chat_tabs (
+//     id TEXT PRIMARY KEY,
+//     name TEXT,
+//     type TEXT, -- 'system' | 'custom'
+//     sort_order INTEGER
+//   )
+// `);
+
+// db.run(`
+//   CREATE TABLE IF NOT EXISTS chat_rules (
+//     id TEXT PRIMARY KEY,
+//     tab_id TEXT,
+//     field TEXT,
+//     operator TEXT,
+//     value TEXT,
+//     FOREIGN KEY(tab_id) REFERENCES chat_tabs(id) ON DELETE CASCADE
+//   )
+// `);
+
 // Migrations
 try { db.run("ALTER TABLE contacts ADD COLUMN push_name TEXT"); } catch (e) {}
 try { db.run("ALTER TABLE contacts ADD COLUMN custom_name TEXT"); } catch (e) {}
-
+try { db.run("ALTER TABLE contacts ADD COLUMN is_favorite INTEGER DEFAULT 0"); } catch (e) {}

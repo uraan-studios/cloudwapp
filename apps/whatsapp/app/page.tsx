@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { SearchBar } from "../components/sidebar/search-bar";
 import { TabsList } from "../components/sidebar/tabs-list";
+import { CallModal } from "../components/call-modal";
 // Context Menu
 import {
   ContextMenu,
@@ -24,7 +25,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Paperclip, Image as ImageIcon, FileText, Mic } from "lucide-react";
+import { Paperclip, Image as ImageIcon, FileText, Mic, Phone, Video } from "lucide-react";
 
 // Types matching backend storage
 interface Message {
@@ -37,6 +38,7 @@ interface Message {
   status: "sent" | "delivered" | "read" | "failed";
   direction: "incoming" | "outgoing";
   reactions?: Record<string, string>;
+  context?: { message_id: string };
 }
 
 interface Contact {
@@ -58,6 +60,7 @@ export default function Home() {
   useEffect(() => {
     activeContactRef.current = activeContact;
   }, [activeContact]);
+  
   const [inputText, setInputText] = useState("");
   const [status, setStatus] = useState("Disconnected");
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -76,8 +79,6 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
 
-
-
   const chatRef = useRef<ReturnType<typeof api.chat.subscribe>>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -93,6 +94,28 @@ export default function Home() {
 
   const [attachmentDrafts, setAttachmentDrafts] = useState<{ file: File, preview: string, type: 'image' | 'video' | 'audio' | 'document', caption: string }[]>([]);
   const [currentDraftIndex, setCurrentDraftIndex] = useState(0);
+
+  // Call State
+  const [callState, setCallState] = useState<{
+      isOpen: boolean;
+      type: 'incoming' | 'outgoing' | 'active';
+      callId?: string;
+      remoteSdp?: string;
+      contactName: string;
+      stream?: MediaStream;
+  }>({
+      isOpen: false,
+      type: 'incoming',
+      contactName: '',
+  });
+  const [isMuted, setIsMuted] = useState(false);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const callStateRef = useRef(callState);
+
+  useEffect(() => {
+    callStateRef.current = callState;
+  }, [callState]);
 
   // Attachment Handlers
   const handleAttachmentClick = (type: 'image' | 'document') => {
@@ -125,9 +148,6 @@ export default function Home() {
       });
 
       setAttachmentDrafts(prev => [...prev, ...newDrafts]);
-      // If we were empty, start at 0. If adding more, user stays on current or goes to new? 
-      // WhatsApp behavior: usually jumps to new. Let's keep it simple: stay if already open.
-      
       e.target.value = "";
   };
 
@@ -141,6 +161,7 @@ export default function Home() {
           setCurrentDraftIndex(currentDraftIndex - 1);
       }
   };
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -172,10 +193,9 @@ export default function Home() {
   const stopAndSendRecording = () => {
       if (mediaRecorderRef.current && isRecording) {
           mediaRecorderRef.current.onstop = async () => {
-              const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); // Default browser format
+              const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' }); 
               const audioFile = new File([audioBlob], "voice_note.webm", { type: 'audio/webm' });
               
-              // Upload Logic
               const formData = new FormData();
               formData.append("file", audioFile);
 
@@ -194,7 +214,6 @@ export default function Home() {
                   }
               } catch (e) { console.error(e); }
               
-              // Cleanup tracks
               mediaRecorderRef.current?.stream.getTracks().forEach(track => track.stop());
           };
           mediaRecorderRef.current.stop();
@@ -226,7 +245,6 @@ export default function Home() {
   };
 
   // Auto-scroll
-  // Auto-scroll to bottom only if we're not loading old messages
   useEffect(() => {
     if (!isLoadingMore) {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -236,14 +254,12 @@ export default function Home() {
   // Initial Load when Contact Changes
   useEffect(() => {
     if (activeContact && chatRef.current) {
-        setMessages([]); // Clear previous messages
-        setHasMore(true); // Reset hasMore assuming there's content
+        setMessages([]); 
+        setHasMore(true); 
         setNextCursor(null);
         chatRef.current.send({ type: 'get_messages', contactId: activeContact.id, limit: 50 });
     }
   }, [activeContact?.id]);
-  
-
 
   // Infinite Scroll Handler
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -260,30 +276,207 @@ export default function Home() {
       }
   };
 
+  // WebRTC Setup
+  const setupWebRTC = async (isInitiator: boolean) => {
+      console.log("Setting up WebRTC...");
+      const pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] 
+      });
+      peerConnectionRef.current = pc;
+
+      pc.oniceconnectionstatechange = () => {
+          console.log("ICE Connection State:", pc.iceConnectionState);
+      };
+      pc.onconnectionstatechange = () => {
+          console.log("Connection State:", pc.connectionState);
+      };
+
+      try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          localStreamRef.current = stream;
+          stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      } catch (e) {
+          console.error("Error accessing mic:", e);
+          alert("Could not access microphone");
+          return null;
+      }
+      
+      pc.onicecandidate = (event) => {
+          // Candidates are gathered in the localDescription
+      };
+
+      pc.ontrack = (event) => {
+          console.log("Received remote track");
+          const remoteAudio = new Audio();
+          remoteAudio.srcObject = event.streams[0];
+          remoteAudio.play();
+      };
+
+      return pc;
+  };
+
+  const getDisplayName = (c: Contact) => c.customName || c.pushName || c.name || c.id;
+
+  const formatSDP = (sdp: string) => {
+      if (!sdp) return "";
+      // Just normalize line endings to CRLF - JSON.parse already handles escape sequences
+      return sdp.split(/\r?\n/).join('\r\n');
+  };
+
+  const sanitizeSDP = (sdp: string) => {
+      return sdp.split('\r\n')
+          .filter(line => {
+             // Remove TCP candidates as Meta only supports UDP
+             if (line.includes('a=candidate') && line.toLowerCase().includes('tcp')) return false;
+             // Remove unsupported fingerprints if any (usually not needed for modern Chrome)
+             return true;
+          })
+          .join('\r\n');
+  };
+
+  const waitForIceGathering = (pc: RTCPeerConnection) => {
+      return new Promise<void>((resolve) => {
+          if (pc.iceGatheringState === 'complete') {
+              resolve();
+              return;
+          }
+          const checkState = () => {
+              if (pc.iceGatheringState === 'complete') {
+                  pc.removeEventListener('icegatheringstatechange', checkState);
+                  resolve();
+              }
+          };
+          pc.addEventListener('icegatheringstatechange', checkState);
+          // Fallback timeout in case gathering takes too long
+          setTimeout(() => {
+             console.log("ICE Gathering timed out, proceeding with collected candidates");
+             resolve();
+          }, 2000); 
+      });
+  };
+
+  const startCall = async () => {
+      if (!activeContact) return;
+      const pc = await setupWebRTC(true);
+      if (!pc) return;
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Wait for ICE candidates to be gathered
+      await waitForIceGathering(pc);
+      
+      // Use result sdp from localDescription which contains candidates
+      const finalSdp = pc.localDescription?.sdp || "";
+      const sanitizedSDP = sanitizeSDP(finalSdp);
+      
+      console.log("Original SDP length:", finalSdp.length);
+      console.log("Sanitized SDP length:", sanitizedSDP.length);
+
+      setCallState({
+          isOpen: true,
+          type: 'outgoing',
+          contactName: getDisplayName(activeContact),
+      });
+
+      chatRef.current?.send({ 
+          type: 'call_start', 
+          to: activeContact.id, 
+          sdp: sanitizedSDP
+      });
+  };
+
+  const acceptCall = async () => {
+      if (!callState.remoteSdp || !callState.callId) return;
+
+      const pc = await setupWebRTC(false);
+      if (!pc) return;
+
+      // Meta sends offer, we set it as remote
+      const remoteDesc = new RTCSessionDescription({ type: 'offer', sdp: callState.remoteSdp });
+      await pc.setRemoteDescription(remoteDesc);
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      // Wait for ICE candidates
+      await waitForIceGathering(pc);
+
+      const finalSdp = pc.localDescription?.sdp || "";
+      const sanitizedSDP = sanitizeSDP(finalSdp);
+
+      setCallState(prev => ({ ...prev, type: 'active' }));
+
+      chatRef.current?.send({ 
+          type: 'call_accept', 
+          callId: callState.callId, 
+          sdp: sanitizedSDP
+      });
+  };
+
+  const rejectCall = () => {
+      if (callState.callId) {
+          chatRef.current?.send({ type: 'call_reject', callId: callState.callId });
+      }
+      endCallCleanup();
+  };
+
+  const endCall = () => {
+      rejectCall();
+  };
+
+  const endCallCleanup = () => {
+      localStreamRef.current?.getTracks().forEach(t => t.stop());
+      peerConnectionRef.current?.close();
+      setCallState(prev => ({ ...prev, isOpen: false }));
+  };
+
+  const toggleMute = () => {
+      if (localStreamRef.current) {
+          localStreamRef.current.getAudioTracks().forEach(track => {
+              track.enabled = !track.enabled;
+          });
+          setIsMuted(!isMuted);
+      }
+  };
+
   useEffect(() => {
     const chat = api.chat.subscribe();
     chatRef.current = chat;
 
     chat.subscribe((response: any) => {
-      const data = response.data;
-      const type = response.type || (data && data.type); 
+      let parsed: any = {};
+      
+      try {
+          // Handle Raw MessageEvent from WebSocket
+          if (response && response.data && typeof response.data === 'string') {
+               parsed = JSON.parse(response.data);
+          } 
+          // Handle potentially pre-parsed response (fallback)
+          else if (response && response.data) {
+               parsed = response.data;
+          }
+          else {
+               parsed = response;
+          }
+      } catch (e) {
+          console.error("WS Parse Error:", e);
+          return;
+      }
 
-      console.log("WS Received:", response);
+      console.log("WS Parsed:", parsed);
+      
+      const type = parsed.type;
+      const data = parsed.data || parsed; // Unified data access
 
       if (type === "contacts") {
         setContacts(data.data || data); 
       } else if (type === "messages_loaded") {
           const { contactId, data: loadedMsgs, nextCursor: newCursor } = data || response;
-          // Only update if it's for current contact
           const currentContact = activeContactRef.current;
           if (currentContact && contactId === currentContact.id) {
               setMessages(prev => {
-                  // If we have previous messages and this load is "older" (based on no overlap or just logic),
-                  // verify if it's a prepend or replace.
-                  // Simplest logic: If we sort by timestamp, merging is safe.
-                  // But to keep scroll position, we assume loadedMsgs are OLDER than prev.
                   const merged = [...prev, ...loadedMsgs]; 
-                  // Deduplicate just in case
                   const unique = Array.from(new Map(merged.map(m => [m.id, m])).values());
                   return unique.sort((a,b) => a.timestamp - b.timestamp);
               });
@@ -293,7 +486,6 @@ export default function Home() {
           }
       } else if (type === "message") {
         const msg = data.data || data; 
-        // Only append if it belongs to active chat
         const currentContact = activeContactRef.current;
         if (currentContact && (msg.from === currentContact.id || msg.to === currentContact.id)) {
              setMessages((prev) => {
@@ -336,10 +528,108 @@ export default function Home() {
           if (activeContactRef.current?.id === id) {
               setActiveContact(prev => prev ? { ...prev, customName } : prev);
           }
-
       } 
-    });
+      // Call Events
+      else if (type === 'call_answered') {
+          console.log("🔔 CALL_ANSWERED EVENT RECEIVED");
+          console.log("Full parsed object:", JSON.stringify(parsed, null, 2));
+          console.log("Data object:", JSON.stringify(data, null, 2));
+          
+          // Handshake for outgoing call
+          const payload = data?.data || data;
+          console.log("Extracted payload:", JSON.stringify(payload, null, 2));
+          
+          const { callId, sdp } = payload;
+          console.log("Extracted values - callId:", callId, "sdp length:", sdp?.length);
+          
+          console.log("Current state - peerConnection exists:", !!peerConnectionRef.current);
+          console.log("Current state - callState.callId:", callStateRef.current.callId);
+          console.log("Current state - callState.type:", callStateRef.current.type);
+          
+          // Accept answer if:
+          // 1. We have a peer connection AND
+          // 2. Either callIds match OR we're in outgoing state (race condition - callId not arrived yet)
+          const shouldProcess = peerConnectionRef.current && 
+                               (callStateRef.current.callId === callId || 
+                                callStateRef.current.type === 'outgoing');
+          
+          console.log("Should process:", shouldProcess);
+          
+          if (shouldProcess) {
+              // Update callId if we don't have it yet (race condition fix)
+              if (!callStateRef.current.callId && callId) {
+                  console.log("📌 Storing callId from answer (race condition):", callId);
+                  setCallState(prev => ({ ...prev, callId }));
+              }
+              
+              const formattedSdp = formatSDP(sdp);
+              
+              console.log("✅ Processing handshake answer for outgoing call", { 
+                  callId, 
+                  originalSdpLength: sdp?.length, 
+                  formattedSdpLength: formattedSdp.length,
+                  snippet: formattedSdp.substring(0, 100)
+              });
 
+              if (formattedSdp && formattedSdp.length > 10) {
+                  try {
+                      // Validate it starts with v=
+                      if (!formattedSdp.trim().startsWith('v=')) {
+                           console.error("❌ Invalid SDP: Does not start with v=", formattedSdp.substring(0, 100));
+                           return;
+                      }
+                      
+                      console.log("Creating RTCSessionDescription with type: 'answer'");
+                      const remoteDesc = new RTCSessionDescription({ type: 'answer', sdp: formattedSdp });
+                      console.log("Calling setRemoteDescription...");
+                      
+                      if (peerConnectionRef.current) {
+                          peerConnectionRef.current.setRemoteDescription(remoteDesc)
+                              .then(() => {
+                                  console.log("✅ setRemoteDescription SUCCESS - call is now connecting");
+                                  // Don't set to 'active' yet - wait for actual audio connection
+                              })
+                              .catch(e => {
+                                  console.error("❌ Error in setRemoteDescription:", e);
+                                  console.error("Error details:", e.message, e.name);
+                              });
+                      }
+                  } catch(e) {
+                      console.error("❌ DOMException creating RTCSessionDescription:", e);
+                  }
+              } else {
+                  console.error("❌ Received call_answered but SDP is missing or too short", { payload, formattedSdpLength: formattedSdp.length });
+              }
+          } else {
+              console.error("❌ Conditions not met for processing answer:");
+              if (!peerConnectionRef.current) console.error("  - No peer connection");
+              if (callStateRef.current.callId !== callId && callStateRef.current.type !== 'outgoing') {
+                  console.error("  - CallId mismatch AND not in outgoing state");
+                  console.error("    Current callId:", callStateRef.current.callId);
+                  console.error("    Received callId:", callId);
+                  console.error("    Current type:", callStateRef.current.type);
+              }
+          }
+      }
+      else if (type === 'call_incoming') {
+          const callData = data.data || data || response.data;
+          setCallState({
+              isOpen: true,
+              type: 'incoming',
+              contactName: callData.fromName || callData.from || 'Unknown',
+              callId: callData.id,
+              remoteSdp: callData.sdp || callData.session?.sdp
+          });
+      }
+      else if (type === 'call_ended') {
+          console.log("Call ended by remote");
+          endCallCleanup();
+      }
+      else if (type === 'call_created') {
+          const { callId } = data || response;
+          setCallState(prev => ({ ...prev, callId }));
+      }
+    });
 
     chat.on("open", () => {
       setStatus("Connected");
@@ -361,8 +651,6 @@ export default function Home() {
   );
   
   // Filter Contacts based on Search and Tabs
-  const getDisplayName = (c: Contact) => c.customName || c.pushName || c.name || c.id;
-
   const filteredContacts = contacts.filter(c => {
       // 1. Search Filter
       if (searchQuery) {
@@ -388,7 +676,6 @@ export default function Home() {
           unread.forEach(m => {
               chatRef.current?.send({ type: "read", messageId: m.id });
           });
-          // Optimistic local update
           setMessages(prev => prev.map(m => 
             (m.direction === 'incoming' && m.from === activeContact.id && m.status !== 'read') 
             ? { ...m, status: 'read' } 
@@ -444,7 +731,6 @@ export default function Home() {
 
     if (!inputText.trim() || !activeContact) return;
 
-    // Text Message Send Logic
     chatRef.current?.send({
       type: "text",
       to: activeContact.id,
@@ -456,7 +742,6 @@ export default function Home() {
     setReplyingTo(null);
   };
 
-  // Enter key in Caption Input
   const handleCaptionKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') sendMessage();
   };
@@ -467,22 +752,11 @@ export default function Home() {
 
   const handleReply = (msg: Message) => {
       setReplyingTo(msg);
-      // focus input? basic ref usage
   };
 
   const handleReact = (id: string, emoji: string) => {
       if(!activeContact) return;
-      // Optimistic
       setMessages(prev => prev.map(m => m.id === id ? { ...m, reactions: { ...m.reactions, "me": emoji } } : m));
-      // Send via WS - Backend needs to handle 'reaction' type from client or we send via REST.
-      // Current backend index.ts doesn't explicitly handler 'reaction' type FROM client in WebSocket `message` handler, 
-      // it handles 'text', 'typing', 'read'. 
-      // Implementation Plan check: "Reaction: Click reaction in UI -> Phone should show emoji". 
-      // I probably missed adding 'reaction' handler in backend index.ts. 
-      // I'll add a 'reaction' type support to WS send in next step if needed, or assume meta service handles it via REST.
-      // Ideally reusing valid protocol. Let's send a custom type and hope I added it or will add it.
-      // Wait, backend index.ts ONLY handles: text, typing, read.
-      // I need to add 'reaction' handler to backend index.ts!
       chatRef.current?.send({ type: "reaction", to: activeContact.id, messageId: id, emoji });
   };
 
@@ -496,7 +770,6 @@ export default function Home() {
   const submitRename = () => {
     if (!activeContact) return;
     if (renameValue && renameValue !== (activeContact.customName || activeContact.pushName || activeContact.name || activeContact.id)) {
-        // Optimistic update
         const updated = { ...activeContact, customName: renameValue };
         setActiveContact(updated);
         setContacts(prev => prev.map(c => c.id === activeContact.id ? updated : c));
@@ -505,11 +778,8 @@ export default function Home() {
     }
     setIsRenameOpen(false);
   };
-
-
   
   const toggleFavorite = (c: Contact) => {
-      // Optimistic
       setContacts(prev => prev.map(con => con.id === c.id ? { ...con, isFavorite: !con.isFavorite } : con));
       chatRef.current?.send({ type: 'toggle_favorite', contactId: c.id });
   };
@@ -561,18 +831,28 @@ export default function Home() {
   const renderChat = activeContact ? (
       <>
         {/* Chat Header */}
-        <div className="h-14 bg-[#202c33] flex items-center px-4 shrink-0 shadow-sm z-10">
-             <div className="w-10 h-10 rounded-full bg-gray-500 mr-3 flex items-center justify-center text-white">
-                 {activeContact.id.slice(-2)}
-             </div> 
-             <div className="flex flex-col">
-                 <div className="flex items-center gap-2">
-                     <span className="text-[#e9edef] font-medium">{getDisplayName(activeContact)}</span>
-                     <button onClick={handleRenameClick} className="text-gray-500 hover:text-white text-xs opacity-50 hover:opacity-100" title="Rename Contact">
-                        ✎
-                     </button>
+        <div className="h-14 bg-[#202c33] flex items-center px-4 shrink-0 shadow-sm z-10 justify-between">
+             <div className="flex items-center">
+                 <div className="w-10 h-10 rounded-full bg-gray-500 mr-3 flex items-center justify-center text-white">
+                     {activeContact.id.slice(-2)}
+                 </div> 
+                 <div className="flex flex-col">
+                     <div className="flex items-center gap-2">
+                         <span className="text-[#e9edef] font-medium">{getDisplayName(activeContact)}</span>
+                         <button onClick={handleRenameClick} className="text-gray-500 hover:text-white text-xs opacity-50 hover:opacity-100" title="Rename Contact">
+                            ✎
+                         </button>
+                     </div>
+                     <span className="text-[#8696a0] text-xs">{status}</span>
                  </div>
-                 <span className="text-[#8696a0] text-xs">{status}</span>
+             </div>
+             <div className="flex items-center gap-4">
+                 <button onClick={startCall} className="text-[#8696a0] hover:text-[#e9edef]" title="Audio Call">
+                     <Phone className="w-5 h-5" />
+                 </button>
+                 <button className="text-[#8696a0] hover:text-[#e9edef]" title="Video Call (Disabled)">
+                     <Video className="w-5 h-5 opacity-50" />
+                 </button>
              </div>
         </div>
         
@@ -774,6 +1054,18 @@ export default function Home() {
   return (
     <>
       <ChatLayout sidebar={renderSidebar} activeChat={renderChat} isConnected={status === "Connected"} />
+      
+      <CallModal 
+          isOpen={callState.isOpen}
+          type={callState.type}
+          contactName={callState.contactName}
+          onAccept={acceptCall}
+          onReject={rejectCall}
+          onEnd={endCall}
+          isMuted={isMuted}
+          toggleMute={toggleMute}
+      />
+
       <Dialog open={isRenameOpen} onOpenChange={setIsRenameOpen}>
         <DialogContent className="sm:max-w-[425px] bg-[#202c33] border-gray-700 text-[#e9edef]">
           <DialogHeader>
@@ -801,9 +1093,6 @@ export default function Home() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      
-
     </>
   );
 }
-

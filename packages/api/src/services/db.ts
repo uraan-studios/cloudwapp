@@ -45,6 +45,21 @@ db.run(`
   )
 `);
 
+db.run(`
+  CREATE TABLE IF NOT EXISTS calls (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    from_id TEXT,
+    to_id TEXT,
+    status TEXT,
+    timestamp INTEGER,
+    sdp TEXT,
+    direction TEXT
+  )
+`);
+
+try { db.run("ALTER TABLE calls ADD COLUMN name TEXT"); } catch (e) {}
+
 // db.run(`
 //   CREATE TABLE IF NOT EXISTS chat_tabs (
 //     id TEXT PRIMARY KEY,

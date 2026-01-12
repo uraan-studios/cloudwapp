@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { readFile } from "fs/promises";
 
-const META_API_URL = "https://graph.facebook.com/v17.0";
+const META_API_URL = "https://graph.facebook.com/v18.0";
 
 export const meta = {
   async uploadMedia(filePath: string, mimeType: string) {
@@ -204,5 +204,145 @@ export const meta = {
         },
         body: JSON.stringify(body),
       });
+  },
+
+  async initiateCall(to: string, sdp: string) {
+    const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+    const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
+
+    if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) return;
+
+    console.log(`[Meta] Initiating call to ${to}`);
+    const body = {
+        messaging_product: "whatsapp",
+        to: to,
+        action: "connect",
+        session: {
+            sdp_type: "offer",
+            sdp: sdp
+        }
+    };
+
+    try {
+        const res = await fetch(`${META_API_URL}/${PHONE_NUMBER_ID}/calls`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${ACCESS_TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            console.error("[Meta] Initiate Call Error:", data);
+            return null;
+        }
+        console.log("[Meta] Initiate Call Success:", data);
+        return data; // Should contain call_id
+    } catch (e) {
+        console.error("[Meta] Initiate Call Network Error:", e);
+        return null;
+    }
+  },
+
+  async respondToCall(callId: string, action: 'accept' | 'reject' | 'pre_accept', sdp?: string) {
+    const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+    const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
+
+    if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) return;
+
+    console.log(`[Meta] Responding to call ${callId} with action ${action}`);
+    const body: any = {
+        messaging_product: "whatsapp",
+        call_id: callId,
+        action: action
+    };
+
+    if (action === 'accept' && sdp) {
+        body.session = {
+            sdp_type: "answer",
+            sdp: sdp
+        };
+    }
+
+    try {
+        const res = await fetch(`${META_API_URL}/${PHONE_NUMBER_ID}/calls`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${ACCESS_TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            console.error("[Meta] Respond Call Error:", data);
+        } else {
+            console.log("[Meta] Respond Call Success");
+        }
+    } catch (e) {
+        console.error("[Meta] Respond Call Network Error:", e);
+    }
+  },
+
+  async enableCalling() {
+    const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+    const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
+
+    if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) {
+      console.error("Missing Meta Credentials for Enable Calling");
+      return null;
+    }
+
+    const body = {
+      calling: {
+        status: "ENABLED",
+        call_icon_visibility: "DEFAULT",
+        callback_permission_status: "ENABLED",
+      },
+    };
+
+    console.log("[Meta] Enabling Calling with body:", JSON.stringify(body, null, 2));
+    try {
+      const res = await fetch(`${META_API_URL}/${PHONE_NUMBER_ID}/settings`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        console.error("Meta API Settings Error Details:", JSON.stringify(data, null, 2));
+        return null;
+      }
+      console.log("Calling enabled successfully:", data);
+      return data;
+    } catch (e) {
+      console.error("Meta Network Error (Enable Calling):", e);
+    }
+  },
+  async getSettings() {
+    const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+    const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
+
+    if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) return null;
+
+    try {
+      const res = await fetch(`${META_API_URL}/${PHONE_NUMBER_ID}/settings?fields=calling`, {
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+        },
+      });
+
+      const data = await res.json();
+      console.log("Current Settings:", JSON.stringify(data, null, 2));
+      return data;
+    } catch (e) {
+      console.error("Meta Network Error (Get Settings):", e);
+      return null;
+    }
   }
 };

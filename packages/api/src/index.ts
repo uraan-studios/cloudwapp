@@ -26,6 +26,16 @@ const app = new Elysia()
     return new Response("Forbidden", { status: 403 });
   })
 
+  // Enable Calling Settings
+  .post("/enable-calling", async () => {
+      const result = await meta.enableCalling();
+      if (result) {
+          return { success: true, data: result };
+      } else {
+          return new Response("Failed to enable calling", { status: 500 });
+      }
+  })
+
   // File Upload Endpoint
   // File Upload Endpoint
   .post("/upload", async ({ body }) => {
@@ -153,6 +163,46 @@ const app = new Elysia()
                   server?.publish("chat", JSON.stringify({ type: "status", id: s.id, status: s.status }));
               }
           }
+          // Handle calls
+          if (change.value.calls) {
+              for (const call of change.value.calls) {
+                  console.log("[Index] Received Call Event:", JSON.stringify(call));
+                  // Try to find contact name in storage
+                  const contactId = call.direction === 'BUSINESS_INITIATED' ? call.to : call.from;
+                  const contact = await storage.getContacts().then(list => list.find(c => c.id === contactId));
+                  const name = contact?.customName || contact?.pushName || contact?.name || contactId;
+
+                  const isOutgoing = call.direction === 'BUSINESS_INITIATED';
+
+                  // Save call (upsert)
+                  await storage.saveCall({
+                      id: call.id,
+                      name: name,
+                      from: isOutgoing ? 'me' : call.from,
+                      to: isOutgoing ? call.to : 'me',
+                      status: call.event === 'connect' ? 'active' : 'ended',
+                      timestamp: Date.now(),
+                      direction: isOutgoing ? 'outgoing' : 'incoming',
+                      sdp: call.session?.sdp || undefined
+                  });
+
+                  if (isOutgoing && call.event === 'connect' && call.session?.sdp) {
+                      // Handshake answer for outgoing call
+                      server?.publish("chat", JSON.stringify({ 
+                          type: "call_answered", 
+                          data: { callId: call.id, sdp: call.session.sdp } 
+                      }));
+                  } else if (!isOutgoing && call.event === 'connect') {
+                      // Real incoming call
+                      server?.publish("chat", JSON.stringify({ 
+                          type: "call_incoming", 
+                          data: { ...call, fromName: name, sdp: call.session?.sdp } 
+                      }));
+                  } else if (call.event === 'terminate') {
+                      server?.publish("chat", JSON.stringify({ type: "call_ended", callId: call.id }));
+                  }
+              }
+          }
         }
       }
     }
@@ -255,6 +305,42 @@ const app = new Elysia()
             await meta.markAsRead(message.messageId);
             await storage.updateMessageStatus(message.messageId, 'read');
             ws.publish("chat", JSON.stringify({ type: "status", id: message.messageId, status: 'read' }));
+        }
+        // Call Handling
+        else if (message.type === 'call_accept') {
+            console.log(`[WS] Accepting call ${message.callId}`);
+            await meta.respondToCall(message.callId, 'accept', message.sdp);
+            await storage.updateCallStatus(message.callId, 'active');
+            // Broadcast that call is answered (maybe optional depending on frontend flow)
+        }
+        else if (message.type === 'call_reject') {
+            console.log(`[WS] Rejecting call ${message.callId}`);
+            await meta.respondToCall(message.callId, 'reject');
+            await storage.updateCallStatus(message.callId, 'rejected');
+        }
+        else if (message.type === 'call_start') {
+            console.log(`[WS] Starting call to ${message.to}`);
+            
+            const res = await meta.initiateCall(message.to, message.sdp);
+            if (res && res.id) {
+                 // IMMEDIATELY send the callId to frontend BEFORE webhook arrives
+                 ws.send(JSON.stringify({ type: "call_created", callId: res.id }));
+                 
+                 // Try to get contact name
+                 const contact = await storage.getContacts().then(list => list.find(c => c.id === message.to));
+                 const name = contact?.customName || contact?.pushName || contact?.name || message.to;
+
+                 await storage.saveCall({
+                     id: res.id,
+                     name: name,
+                     from: 'me',
+                     to: message.to,
+                     status: 'active',
+                     timestamp: Date.now(),
+                     direction: 'outgoing',
+                     sdp: message.sdp
+                 });
+            }
         }
     },
   })

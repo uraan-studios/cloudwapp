@@ -23,8 +23,65 @@ export interface Contact {
   lastMessage?: Message;
 }
 
+export interface Call {
+  id: string; // WhatsApp Call ID
+  name?: string; // Display name
+  from: string;
+  to: string;
+  status: 'incoming' | 'active' | 'ended' | 'rejected' | 'missed' | 'failed';
+  timestamp: number;
+  sdp?: string; // Stored temporarily for handshake
+  direction: 'incoming' | 'outgoing';
+}
 
 export const storage = {
+  async saveCall(call: Call) {
+      console.log(`[Storage] Saving call: ${call.id}`);
+      const insert = db.prepare(`
+          INSERT OR REPLACE INTO calls (id, name, from_id, to_id, status, timestamp, sdp, direction)
+          VALUES ($id, $name, $from, $to, $status, $timestamp, $sdp, $direction)
+      `);
+      insert.run({
+        $id: call.id,
+        $name: call.name || null,
+        $from: call.from,
+        $to: call.to,
+        $status: call.status,
+        $timestamp: call.timestamp,
+        $sdp: call.sdp || null,
+        $direction: call.direction
+      });
+  },
+
+  async updateCallStatus(id: string, status: Call['status'], sdp?: string) {
+      console.log(`[Storage] Updating call ${id} status to ${status}`);
+      let query = "UPDATE calls SET status = $status";
+      const params: any = { $status: status, $id: id };
+      
+      if (sdp !== undefined) {
+          query += ", sdp = $sdp";
+          params.$sdp = sdp;
+      }
+      
+      query += " WHERE id = $id";
+      db.prepare(query).run(params);
+  },
+
+  async getCall(id: string): Promise<Call | null> {
+      const row = db.prepare("SELECT * FROM calls WHERE id = $id").get({ $id: id }) as any;
+      if (!row) return null;
+      return {
+          id: row.id,
+          name: row.name,
+          from: row.from_id,
+          to: row.to_id,
+          status: row.status,
+          timestamp: row.timestamp,
+          sdp: row.sdp,
+          direction: row.direction
+      };
+  },
+
   async saveMessage(message: Message) {
     const insertMessage = db.prepare(`
         INSERT OR REPLACE INTO messages (id, from_id, to_id, type, content, timestamp, status, direction, context_id)

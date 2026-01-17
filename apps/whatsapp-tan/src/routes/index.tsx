@@ -1,5 +1,4 @@
-"use client";
-
+import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState, useRef } from "react";
 import { api } from "../lib/eden-client";
 import { ChatLayout } from "../components/chat-layout";
@@ -27,6 +26,10 @@ import {
 } from "@/components/ui/context-menu";
 import { Paperclip, Image as ImageIcon, FileText, Mic, Phone, Video } from "lucide-react";
 
+export const Route = createFileRoute('/')({
+  component: Home,
+})
+
 // Types matching backend storage
 interface Message {
   id: string;
@@ -48,9 +51,10 @@ interface Contact {
   customName?: string;
   isFavorite?: boolean;
   lastMessage?: Message;
+  lastUserMsgTimestamp?: number;
 }
 
-export default function Home() {
+function Home() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
@@ -94,6 +98,16 @@ export default function Home() {
 
   const [attachmentDrafts, setAttachmentDrafts] = useState<{ file: File, preview: string, type: 'image' | 'video' | 'audio' | 'document', caption: string }[]>([]);
   const [currentDraftIndex, setCurrentDraftIndex] = useState(0);
+
+  // Template State
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
+  const [templateParams, setTemplateParams] = useState<string[]>([]);
+
+  // 24h Window Check
+  const isWindowOpen = activeContact ? (Date.now() - (activeContact.lastUserMsgTimestamp || 0) < 24 * 60 * 60 * 1000) : true;
 
   // Call State
   const [callState, setCallState] = useState<{
@@ -227,7 +241,7 @@ export default function Home() {
                           to: activeContact!.id,
                           id: data.id,
                           caption: "",
-                          fileName: "voice_note.webm",
+                          fileName: "voice_note.ogg",
                           isVoiceNote: true
                       });
                   }
@@ -551,7 +565,7 @@ export default function Home() {
       if (type === "contacts") {
         setContacts(data.data || data); 
       } else if (type === "messages_loaded") {
-          const { contactId, data: loadedMsgs, nextCursor: newCursor } = data || response;
+          const { contactId, data: loadedMsgs, nextCursor: newCursor } = parsed;
           const currentContact = activeContactRef.current;
           if (currentContact && contactId === currentContact.id) {
               setMessages(prev => {
@@ -863,6 +877,50 @@ export default function Home() {
       chatRef.current?.send({ type: 'toggle_favorite', contactId: c.id });
   };
 
+  const fetchTemplates = async () => {
+      setIsLoadingTemplates(true);
+      try {
+          const res = await fetch("http://localhost:3000/templates");
+          const data = await res.json();
+          if (Array.isArray(data)) {
+              setTemplates(data);
+          }
+      } catch (e) {
+          console.error("Failed to fetch templates:", e);
+      } finally {
+          setIsLoadingTemplates(false);
+      }
+  };
+
+  const openTemplateModal = () => {
+      setIsTemplateModalOpen(true);
+      if (templates.length === 0) fetchTemplates();
+  };
+
+  const handleSendTemplate = () => {
+      if (!activeContact || !selectedTemplate) return;
+      
+      const components = [];
+      if (templateParams.length > 0) {
+          components.push({
+              type: "body",
+              parameters: templateParams.map(p => ({ type: "text", text: p }))
+          });
+      }
+
+      chatRef.current?.send({
+          type: "template",
+          to: activeContact.id,
+          templateName: selectedTemplate.name,
+          languageCode: selectedTemplate.languageCode || selectedTemplate.language || "en_US",
+          components: components
+      });
+      
+      setIsTemplateModalOpen(false);
+      setSelectedTemplate(null);
+      setTemplateParams([]);
+  };
+
   const renderSidebar = (
       <div className="flex flex-col h-full">
           <SearchBar value={searchQuery} onChange={setSearchQuery} />
@@ -908,7 +966,7 @@ export default function Home() {
   );
 
   const renderChat = activeContact ? (
-      <>
+      <div className="flex flex-col h-full relative">
         {/* Chat Header */}
         <div className="h-14 bg-[#202c33] flex items-center px-4 shrink-0 shadow-sm z-10 justify-between">
              <div className="flex items-center">
@@ -1094,6 +1152,18 @@ export default function Home() {
                              <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" version="1.1"><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg>
                         </button>
                     </div>
+                ) : !isWindowOpen ? (
+                    <div className="flex-1 flex items-center justify-between gap-4 bg-[#1f2428] rounded-lg px-4 py-2 border border-yellow-600/30">
+                        <span className="text-yellow-500 text-xs flex items-center gap-2">
+                            ⚠️ 24h Window Closed
+                        </span>
+                        <button 
+                            onClick={openTemplateModal}
+                            className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded shadow transition-colors font-medium"
+                        >
+                            Send Template
+                        </button>
+                    </div>
                 ) : (
                     <>
                         <input 
@@ -1122,7 +1192,130 @@ export default function Home() {
                 )}
             </div>
         </div>
-      </>
+        {/* Template Drawer inside Chat */}
+        <div className={`absolute bottom-0 left-0 right-0 bg-[#202c33] z-20 transition-all duration-300 ease-in-out border-t border-[#2a3942] shadow-2xl flex flex-col ${isTemplateModalOpen ? "h-[500px]" : "h-0"}`}>
+        {isTemplateModalOpen && (
+            <div className="flex flex-col h-full animate-in fade-in duration-300">
+                {/* Drawer Header */}
+                <div className="h-14 flex items-center justify-between px-4 border-b border-[#2a3942] bg-[#202c33] shrink-0">
+                    <div className="flex items-center gap-2">
+                        {selectedTemplate && (
+                            <button 
+                                onClick={() => { setSelectedTemplate(null); setTemplateParams([]); }}
+                                className="mr-2 text-gray-400 hover:text-white transition-colors"
+                            >
+                                <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                            </button>
+                        )}
+                        <span className="font-medium text-[#e9edef]">{selectedTemplate ? selectedTemplate.name : "Select Template"}</span>
+                    </div>
+                    <button 
+                        onClick={() => { setIsTemplateModalOpen(false); setSelectedTemplate(null); }}
+                        className="p-2 hover:bg-[#374248] rounded-full text-gray-400 transition-colors"
+                    >
+                         <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
+
+                {/* Drawer Content */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+                    {!selectedTemplate ? (
+                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                             {isLoadingTemplates ? (
+                                 <div className="text-gray-500 text-center col-span-2 py-8">Loading available templates...</div>
+                             ) : templates.length === 0 ? (
+                                 <div className="text-gray-500 text-center col-span-2 py-8">No templates found.</div>
+                             ) : (
+                                 templates.map((t: any) => (
+                                     <div 
+                                         key={t.name}
+                                         onClick={() => {
+                                             setSelectedTemplate(t);
+                                             const bodyComp = t.components.find((c: any) => c.type === 'BODY');
+                                             if (bodyComp && bodyComp.text) {
+                                                 const matches = bodyComp.text.match(/{{(\d+)}}/g);
+                                                 if (matches) setTemplateParams(new Array(matches.length).fill(""));
+                                                 else setTemplateParams([]);
+                                             } else setTemplateParams([]);
+                                         }}
+                                         className="bg-[#111b21] p-4 rounded-lg border border-[#2a3942] hover:border-teal-600/50 cursor-pointer transition-all hover:bg-[#182229] group relative overflow-hidden"
+                                     >
+                                         <div className="flex justify-between items-start mb-2">
+                                             <div className="font-medium text-teal-500 group-hover:text-teal-400 transition-colors uppercase text-xs tracking-wider">{t.components?.find((c: any) => c.type === 'HEADER')?.text || "Standard"}</div>
+                                             <div className="text-[10px] bg-[#202c33] px-2 py-0.5 rounded text-gray-400 border border-[#2a3942]">{t.language || t.languageCode || "en"}</div>
+                                         </div>
+                                         <h3 className="font-bold text-[#e9edef] mb-1">{t.name}</h3>
+                                         <p className="text-sm text-[#8696a0] line-clamp-2">
+                                             {t.components?.find((c: any) => c.type === 'BODY')?.text || "No preview"}
+                                         </p>
+                                     </div>
+                                 ))
+                             )}
+                         </div>
+                    ) : (
+                        <div className="max-w-2xl mx-auto space-y-6 animate-in slide-in-from-right-4 duration-300">
+                             {/* Preview Card */}
+                             <div className="bg-[#e9edef] text-[#111b21] p-4 rounded-lg rounded-tl-none shadow border border-gray-300 relative max-w-sm">
+                                 <div className="text-sm whitespace-pre-wrap">
+                                     {(() => {
+                                         // Dynamic Preview
+                                         let text = selectedTemplate.components?.find((c: any) => c.type === 'BODY')?.text || "";
+                                         templateParams.forEach((param, i) => {
+                                             text = text.replace(`{{${i+1}}}`, param || `{{${i+1}}}`);
+                                         });
+                                         return text;
+                                     })()}
+                                 </div>
+                                 <div className="text-[10px] text-gray-500 text-right mt-1">12:00 PM</div>
+                             </div>
+
+                             {/* Inputs */}
+                             <div className="space-y-4">
+                                 <h4 className="text-[#8696a0] uppercase text-xs font-bold tracking-widest mb-4">Customize Variables</h4>
+                                 {templateParams.length > 0 ? (
+                                     <div className="grid gap-4">
+                                         {templateParams.map((p, i) => (
+                                             <div key={i} className="space-y-1">
+                                                <label className="text-xs text-teal-500 font-medium ml-1">Variable {i + 1}</label>
+                                                <input
+                                                     value={p}
+                                                     onChange={(e) => {
+                                                         const newParams = [...templateParams];
+                                                         newParams[i] = e.target.value;
+                                                         setTemplateParams(newParams);
+                                                     }}
+                                                     placeholder={`Enter value for {{${i+1}}}`}
+                                                     className="w-full bg-[#2a3942] border border-[#2a3942] focus:border-teal-500 text-[#e9edef] rounded px-3 py-2 text-sm focus:outline-none transition-colors"
+                                                     autoFocus={i === 0}
+                                                />
+                                             </div>
+                                         ))}
+                                     </div>
+                                 ) : (
+                                     <div className="text-center text-gray-500 text-sm py-4 italic bg-[#111b21] rounded border border-[#2a3942]">No variables to configure</div>
+                                 )}
+                             </div>
+                        </div>
+                    )}
+                </div>
+                
+                {/* Drawer Footer (Only for Config Mode) */}
+                {selectedTemplate && (
+                    <div className="p-4 border-t border-[#2a3942] bg-[#202c33] flex justify-end">
+                        <button 
+                            onClick={handleSendTemplate}
+                            disabled={templateParams.some(p => !p.trim()) && templateParams.length > 0}
+                            className="bg-[#00a884] hover:bg-[#008f6f] disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-2 rounded-full shadow transition-all font-medium flex items-center gap-2"
+                        >
+                            <span>Send Template</span>
+                            <svg viewBox="0 0 24 24" height="18" width="18" preserveAspectRatio="xMidYMid meet" className="" version="1.1" x="0px" y="0px" enableBackground="new 0 0 24 24"><title>send</title><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg>
+                        </button>
+                    </div>
+                )}
+            </div>
+        )}
+    </div>
+      </div>
   ) : (
       <div className="flex-1 flex flex-col items-center justify-center text-[#8696a0] border-b-[6px] border-[#4fb38e] box-border">
           <h1 className="text-3xl font-light text-[#e9edef] mt-10">WhatsApp Web</h1>
@@ -1193,7 +1386,11 @@ export default function Home() {
             <Button type="submit" onClick={submitRename} className="bg-[#00a884] hover:bg-[#008f6f] text-white">Save changes</Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+    </Dialog>
+
+
+    
+
     </>
   );
 }

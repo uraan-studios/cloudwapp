@@ -20,15 +20,10 @@ export const convertToOgg = async (inputPath: string): Promise<string> => {
         ffmpeg(inputPath)
             .toFormat('ogg')
             .audioCodec('libopus')
+            .audioChannels(1)
+            .audioBitrate('16k')
             .on('end', async () => {
                 console.log(`Conversion finished: ${outputPath}`);
-                // Optional: Delete original? No, let the cleanup job handle it or caller.
-                // But generally we want to return the new path and maybe delete the old one to save space?
-                // For now, let's keep it simple.
-                // Actually, unlink the original to act as a proper "filter"
-                // try {
-                //    await unlink(inputPath);
-                // } catch(e) {}
                 resolve(outputPath);
             })
             .on('error', (err) => {

@@ -21,6 +21,7 @@ export interface Contact {
   customName?: string;
   isFavorite?: boolean;
   lastMessage?: Message;
+  lastUserMsgTimestamp?: number;
 }
 
 export interface Call {
@@ -113,6 +114,16 @@ export const storage = {
         });
 
         const contactId = message.direction === 'incoming' ? message.from : message.to;
+        
+        // Update last_user_msg_timestamp if incoming
+        if (message.direction === 'incoming') {
+             const updateTimestamp = db.prepare(`
+                UPDATE contacts SET last_user_msg_timestamp = $timestamp 
+                WHERE id = $id
+             `);
+             updateTimestamp.run({ $timestamp: message.timestamp, $id: contactId });
+        }
+
         // We minimally insert contact to ensure existence, preserve existing names
         insertContact.run({ 
             $id: contactId, 
@@ -226,12 +237,26 @@ export const storage = {
              pushName: c.push_name,
              customName: c.custom_name,
              isFavorite: !!c.is_favorite,
-             lastMessage: lm
+             lastMessage: lm,
+             lastUserMsgTimestamp: c.last_user_msg_timestamp
          };
     });
     
     // Sort by last message time
     return result.sort((a, b) => (b.lastMessage?.timestamp || 0) - (a.lastMessage?.timestamp || 0));
+  },
+
+  async getContact(id: string): Promise<Contact | null> {
+      const contact = db.prepare("SELECT * FROM contacts WHERE id = $id").get({ $id: id }) as any;
+      if (!contact) return null;
+      return {
+          id: contact.id,
+          name: contact.name,
+          pushName: contact.push_name,
+          customName: contact.custom_name,
+          isFavorite: !!contact.is_favorite,
+          lastUserMsgTimestamp: contact.last_user_msg_timestamp
+      };
   },
 
   async saveContact(id: string, pushName: string) {

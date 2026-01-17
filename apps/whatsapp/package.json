@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3001",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "dev2": "next dev --port 3001",
+    "build2": "next build",
+    "start2": "next start",
+    "lint2": "eslint"
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.2.16",

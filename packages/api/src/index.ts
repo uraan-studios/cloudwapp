@@ -59,7 +59,7 @@ const app = new Elysia()
               console.log("Converting WebM to OGG...", tempPath);
               const { convertToOgg } = await import('./services/converter');
               uploadPath = await convertToOgg(tempPath);
-              mimeType = 'audio/ogg'; // Update MIME for Meta
+              mimeType = 'audio/ogg; codecs=opus'; // Update MIME for Meta to ensure voice note compatibility
           } catch (e) {
               console.error("Conversion failed, attempting upload of original:", e);
           }
@@ -88,6 +88,17 @@ const app = new Elysia()
       body: t.Object({
           file: t.File()
       })
+  })
+
+  // Get Meta Templates
+  .get("/templates", async () => {
+      try {
+          const templates = await meta.getTemplates();
+          return templates;
+      } catch (e) {
+          console.error("Template Endpoint Error:", e);
+          return [];
+      }
   })
 
   // Media Proxy Endpoint
@@ -246,10 +257,16 @@ const app = new Elysia()
             app.server?.publish("chat", JSON.stringify({ type: 'contact_update', data: result })); 
         }
         // Handle outgoing messages
-        else if (["text", "image", "video", "audio", "document"].includes(message.type)) {
+        else if (["text", "image", "video", "audio", "document", "template"].includes(message.type)) {
             let content = "";
             if (message.type === "text") {
                 content = message.content;
+            } else if (message.type === "template") {
+                content = JSON.stringify({
+                    name: message.templateName,
+                    language: message.languageCode,
+                    components: message.components
+                });
             } else {
                 // For media, content is stringified JSON of metadata (id, caption, filename)
                 content = JSON.stringify({
@@ -271,19 +288,40 @@ const app = new Elysia()
                 context: message.context 
             };
             
+            // Check 24h window
+            const contact = await storage.getContact(message.to);
+            const lastMsgTime = contact?.lastUserMsgTimestamp || 0;
+            const isWindowOpen = (Date.now() - lastMsgTime) < (24 * 60 * 60 * 1000);
+
+            // If window is closed AND it's NOT a template, reject
+            if (!isWindowOpen && message.type !== 'template') {
+                 console.log(`[Index] 24h Window Closed for ${message.to}. Rejecting non-template message.`);
+                 ws.send(JSON.stringify({ 
+                     type: "error", 
+                     code: "window_closed",
+                     message: "24-hour window is closed. Please send a template message." 
+                 }));
+                 return;
+            }
+
             await storage.saveMessage(outgoingMsg);
             // Broadcast to self and others
             ws.publish("chat", JSON.stringify({ type: "message", data: outgoingMsg }));
             ws.send(JSON.stringify({ type: "message", data: outgoingMsg })); 
             
-            // Send to Meta
-            const res = await meta.sendMessage(message.to, { 
-                type: message.type, 
-                content: message.content, // Text content
-                id: message.id,           // Media ID
-                caption: message.caption,
-                fileName: message.fileName
-            }, message.context);
+            let res;
+            if (message.type === 'template') {
+                res = await meta.sendTemplate(message.to, message.templateName, message.languageCode, message.components);
+            } else {
+                // Send to Meta normally
+                res = await meta.sendMessage(message.to, { 
+                    type: message.type, 
+                    content: message.content, // Text content
+                    id: message.id,           // Media ID
+                    caption: message.caption,
+                    fileName: message.fileName
+                }, message.context);
+            }
 
             if (res && res.messages && res.messages[0]) {
                 const realId = res.messages[0].id;

@@ -111,6 +111,88 @@ export const meta = {
     }
   },
     
+  async sendTemplate(to: string, templateName: string, languageCode: string = "en_US", components: any[] = []) {
+    const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+    const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
+
+    if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) return;
+
+    const body = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: to,
+      type: "template",
+      template: {
+        name: templateName,
+        language: {
+          code: languageCode
+        },
+        components: components
+      }
+    };
+
+    try {
+        const res = await fetch(`${META_API_URL}/${PHONE_NUMBER_ID}/messages`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${ACCESS_TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+            console.error("Meta Template API Error:", data);
+        }
+        return data;
+    } catch (e) {
+        console.error("Meta Template Network Error:", e);
+    }
+  },
+
+
+  async getTemplates() {
+    const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+    const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
+    const WABA_ID = process.env.META_WABA_ID;
+    
+    // Default Mock Templates
+    const mockTemplates = [
+        { name: "hello_world", language: "en_US", status: "APPROVED", components: [] },
+        { 
+          name: "utility_update", 
+          language: "en_US", 
+          status: "APPROVED",
+          components: [
+              { type: "BODY", text: "Hello {{1}}, we have an update regarding your order {{2}}." }
+          ] 
+        }
+    ];
+
+    if (!ACCESS_TOKEN) return mockTemplates;
+
+    try {
+        if (WABA_ID) {
+             const res = await fetch(`${META_API_URL}/${WABA_ID}/message_templates?status=APPROVED`, {
+                headers: { "Authorization": `Bearer ${ACCESS_TOKEN}` }
+             });
+             if (res.ok) {
+                const data = await res.json();
+                if (data.data) return data.data;
+             }
+        }
+        
+        // If we have PHONE_NUMBER_ID, we could try to look up WABA, but for now fallback to mock.
+        // We explicitly avoid throwing here to prevent 500s.
+        return mockTemplates;
+
+    } catch (e) {
+        console.error("Meta Template Fetch Error:", e);
+        return mockTemplates;
+    }
+  },
+
   async sendReaction(messageId: string, emoji: string, to: string) {
        const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
        const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
@@ -299,6 +381,19 @@ export const meta = {
         status: "ENABLED",
         call_icon_visibility: "DEFAULT",
         callback_permission_status: "ENABLED",
+        call_hours: {
+          status: "ENABLED",
+          timezone_id: "Asia/Karachi",
+          weekly_operating_hours: [
+            { day_of_week: "MONDAY", open_time: "0001", close_time: "2359" },
+            { day_of_week: "TUESDAY", open_time: "0001", close_time: "2359" },
+            { day_of_week: "WEDNESDAY", open_time: "0001", close_time: "2359" },
+            { day_of_week: "THURSDAY", open_time: "0001", close_time: "2359" },
+            { day_of_week: "FRIDAY", open_time: "0001", close_time: "2359" },
+            { day_of_week: "SATURDAY", open_time: "0001", close_time: "2359" },
+            { day_of_week: "SUNDAY", open_time: "0001", close_time: "2359" }
+          ]
+        }
       },
     };
 

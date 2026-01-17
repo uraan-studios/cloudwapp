@@ -84,3 +84,4 @@ try { db.run("ALTER TABLE calls ADD COLUMN name TEXT"); } catch (e) {}
 try { db.run("ALTER TABLE contacts ADD COLUMN push_name TEXT"); } catch (e) {}
 try { db.run("ALTER TABLE contacts ADD COLUMN custom_name TEXT"); } catch (e) {}
 try { db.run("ALTER TABLE contacts ADD COLUMN is_favorite INTEGER DEFAULT 0"); } catch (e) {}
+try { db.run("ALTER TABLE contacts ADD COLUMN last_user_msg_timestamp INTEGER"); } catch (e) {}

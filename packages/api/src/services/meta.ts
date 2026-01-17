@@ -151,6 +151,37 @@ export const meta = {
     }
   },
 
+  async sendInteractive(to: string, interactive: any) {
+    const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+    const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
+
+    if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) return;
+
+    const body = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: to,
+      type: "interactive",
+      interactive: interactive
+    };
+
+    try {
+        const res = await fetch(`${META_API_URL}/${PHONE_NUMBER_ID}/messages`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${ACCESS_TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) console.error("Meta Interactive Error:", data);
+        return data;
+    } catch (e) {
+        console.error("Meta Interactive Network Error:", e);
+    }
+  },
+
 
   async getTemplates() {
     const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
@@ -167,6 +198,33 @@ export const meta = {
           components: [
               { type: "BODY", text: "Hello {{1}}, we have an update regarding your order {{2}}." }
           ] 
+        },
+        {
+          name: "marketing_promo",
+          language: "en_US",
+          status: "APPROVED",
+          components: [
+              { type: "HEADER", format: "IMAGE" },
+              { type: "BODY", text: "Special offer for you, {{1}}! Use code {{2}} at checkout." },
+              { type: "FOOTER", text: "Valid until end of month." },
+              { type: "BUTTONS", buttons: [
+                  { type: "QUICK_REPLY", text: "Stop Promotions" },
+                  { type: "URL", text: "Shop Now", url: "https://example.com/shop" }
+              ]}
+          ]
+        },
+        {
+          name: "order_tracking",
+          language: "en_US",
+          status: "APPROVED",
+          components: [
+              { type: "HEADER", format: "TEXT", text: "Order #{{1}}" },
+              { type: "BODY", text: "Your order for {{2}} has been shipped! Track it using the button below." },
+              { type: "FOOTER", text: "Thanks for choosing us!" },
+              { type: "BUTTONS", buttons: [
+                  { type: "URL", text: "Track Order", url: "https://example.com/track/{{1}}" }
+              ]}
+          ]
         }
     ];
 

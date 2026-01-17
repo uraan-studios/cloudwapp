@@ -305,9 +305,11 @@ export const storage = {
       db.transaction(() => {
           const updateMsg = db.prepare("UPDATE messages SET id = $newId WHERE id = $oldId");
           const updateReactions = db.prepare("UPDATE reactions SET message_id = $newId WHERE message_id = $oldId");
+          const updateContexts = db.prepare("UPDATE messages SET context_id = $newId WHERE context_id = $oldId");
           
           updateMsg.run({ $newId: newId, $oldId: oldId });
           updateReactions.run({ $newId: newId, $oldId: oldId });
+          updateContexts.run({ $newId: newId, $oldId: oldId });
       })();
 
       console.log(`[Storage] Successfully updated ID for message: ${oldId}`);

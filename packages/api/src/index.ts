@@ -146,7 +146,8 @@ const app = new Elysia()
                      content: msg.type === 'text' ? msg.text.body : JSON.stringify(msg[msg.type]),
                      timestamp: parseInt(msg.timestamp) * 1000,
                      status: 'delivered',
-                     direction: 'incoming'
+                     direction: 'incoming',
+                     context: msg.context ? { message_id: msg.context.id } : undefined
                  };
                  
                  // Handle reactions separately if type is reaction
@@ -257,7 +258,7 @@ const app = new Elysia()
             app.server?.publish("chat", JSON.stringify({ type: 'contact_update', data: result })); 
         }
         // Handle outgoing messages
-        else if (["text", "image", "video", "audio", "document", "template"].includes(message.type)) {
+        else if (["text", "image", "video", "audio", "document", "template", "interactive"].includes(message.type)) {
             let content = "";
             if (message.type === "text") {
                 content = message.content;
@@ -267,6 +268,8 @@ const app = new Elysia()
                     language: message.languageCode,
                     components: message.components
                 });
+            } else if (message.type === "interactive") {
+                content = JSON.stringify(message.interactive);
             } else {
                 // For media, content is stringified JSON of metadata (id, caption, filename)
                 content = JSON.stringify({
@@ -285,7 +288,7 @@ const app = new Elysia()
                 timestamp: Date.now(),
                 status: "sent",
                 direction: "outgoing",
-                context: message.context 
+                context: message.context ? { message_id: message.context.message_id || message.context.id } : undefined
             };
             
             // Check 24h window
@@ -312,6 +315,8 @@ const app = new Elysia()
             let res;
             if (message.type === 'template') {
                 res = await meta.sendTemplate(message.to, message.templateName, message.languageCode, message.components);
+            } else if (message.type === 'interactive') {
+                res = await meta.sendInteractive(message.to, message.interactive);
             } else {
                 // Send to Meta normally
                 res = await meta.sendMessage(message.to, { 

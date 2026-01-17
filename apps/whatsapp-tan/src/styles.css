@@ -26,3 +26,14 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans);
 }
+
+@keyframes flash-highlight {
+  0% { background-color: transparent; }
+  25% { background-color: rgba(0, 168, 132, 0.15); } 
+  50% { background-color: rgba(0, 168, 132, 0.08); }
+  100% { background-color: transparent; }
+}
+
+.animate-flash-highlight {
+  animation: flash-highlight 1.5s ease-out;
+}

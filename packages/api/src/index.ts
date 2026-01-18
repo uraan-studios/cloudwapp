@@ -111,7 +111,11 @@ const app = new Elysia()
               "Authorization": `Bearer ${process.env.META_ACCESS_TOKEN}`
           }
       });
-      return response;
+
+      // Create a new response with CORS headers
+      const newResponse = new Response(response.body, response);
+      newResponse.headers.set("Access-Control-Allow-Origin", "*");
+      return newResponse;
   })
 
   // Webhook Event Handler (POST)

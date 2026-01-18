@@ -1,28 +1,7 @@
 import { db } from "./db";
+import type { Message, Contact } from "@repo/chatsdk";
 
-// Types matching DB
-export interface Message {
-  id: string;
-  from: string;
-  to: string;
-  type: "text" | "image" | "audio" | "video" | "document" | "sticker" | "unknown";
-  content: string;
-  timestamp: number;
-  status: "sent" | "delivered" | "read" | "failed";
-  direction: "incoming" | "outgoing";
-  reactions?: Record<string, string>;
-  context?: { message_id: string };
-}
-
-export interface Contact {
-  id: string;
-  name?: string;
-  pushName?: string;
-  customName?: string;
-  isFavorite?: boolean;
-  lastMessage?: Message;
-  lastUserMsgTimestamp?: number;
-}
+export { type Message, type Contact };
 
 export interface Call {
   id: string; // WhatsApp Call ID

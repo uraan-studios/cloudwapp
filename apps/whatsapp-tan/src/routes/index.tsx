@@ -21,13 +21,27 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Paperclip, FileText, Mic, Phone, Video, Trash2, Star, Edit2 } from "lucide-react";
+import { Paperclip, FileText, Mic, Phone, Video, Trash2, Star, Edit2, Image, Camera, Zap, PlusCircle, MessageSquarePlus } from "lucide-react";
 import { useChat, type Message, type Contact } from "../lib/chat-sdk";
 import { useWebRTC } from "../lib/use-webrtc";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
+import { MoreVertical, Settings, LogOut, User, Archive, BellOff, MessageSquare } from "lucide-react";
 
 export const Route = createFileRoute('/')({
   component: Home,
 })
+
+const ChatTooltip = ({ label, children }: { label: string, children: React.ReactNode }) => (
+    <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent side="top" className="bg-[#202c33] border-white/10 text-[#e9edef]">{label}</TooltipContent>
+    </Tooltip>
+);
 
 function Home() {
   const { 
@@ -49,6 +63,8 @@ function Home() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
+  const [isNewChatOpen, setIsNewChatOpen] = useState(false);
+  const [newChatValue, setNewChatValue] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [isRecording, setIsRecording] = useState(false);
@@ -330,6 +346,15 @@ function Home() {
     setIsRenameOpen(false);
   };
 
+  const startNewChat = () => {
+      if (newChatValue.trim()) {
+          const id = newChatValue.replace(/\D/g, ''); // Clean number
+          selectContact(id);
+          setIsNewChatOpen(false);
+          setNewChatValue("");
+      }
+  };
+
   const openTemplateModal = () => {
       setIsTemplateModalOpen(true);
       if (templates.length === 0) {
@@ -365,14 +390,31 @@ function Home() {
   };
 
   const handleSendInteractive = () => {
-      if (!activeContact || !interactiveDraft.body) return;
-      const buttons = interactiveDraft.buttons.filter(b => b.trim() !== "").map((b, i) => ({ type: "reply", reply: { id: `btn_${i}`, title: b.trim() } }));
-      if (buttons.length === 0) return;
+      if (!activeContact || !interactiveDraft.body) {
+          console.error("[Chat] Cannot send interactive: missing contact or body", { activeContact, body: interactiveDraft.body });
+          return;
+      }
+      const trimmedButtons = interactiveDraft.buttons.filter(b => b.trim() !== "");
+      const uniqueButtons = new Set(trimmedButtons.map(b => b.trim()));
+      
+      if (uniqueButtons.size !== trimmedButtons.length) {
+          alert("All button titles must be unique!");
+          return;
+      }
+
+      if (trimmedButtons.length === 0) {
+          console.error("[Chat] Cannot send interactive: no buttons provided");
+          return;
+      }
+      const buttons = trimmedButtons.map((b, i) => ({ type: "reply", reply: { id: `btn_${i}`, title: b.trim() } }));
       const interactive: any = { type: "button", body: { text: interactiveDraft.body }, action: { buttons } };
       if (interactiveDraft.header) interactive.header = { type: "text", text: interactiveDraft.header };
       if (interactiveDraft.footer) interactive.footer = { text: interactiveDraft.footer };
+      
+      console.log("[Chat] Sending interactive message:", { to: activeContact.id, interactive });
       sdk.sendMessage(activeContact.id, { type: "interactive", interactive });
-      setIsInteractiveDrawerOpen(false); setInteractiveDraft({ body: "", footer: "", buttons: ["", ""], header: "" });
+      setIsInteractiveDrawerOpen(false); 
+      setInteractiveDraft({ body: "", footer: "", buttons: ["", ""], header: "" });
   };
 
   const filteredContacts = useMemo(() => contacts.filter(c => {
@@ -386,9 +428,19 @@ function Home() {
 
   const renderSidebar = (
       <div className="flex flex-col h-full">
-          <SearchBar value={searchQuery} onChange={setSearchQuery} />
+          <div className="flex items-center gap-2 px-4 py-2">
+              <SearchBar value={searchQuery} onChange={setSearchQuery} />
+              <ChatTooltip label="New Chat">
+                <button 
+                    onClick={() => setIsNewChatOpen(true)}
+                    className="p-2 bg-[#202c33] hover:bg-[#2a3942] text-teal-500 rounded-lg transition-all active:scale-95 shadow-lg border border-white/5"
+                >
+                    <MessageSquarePlus className="w-5 h-5" />
+                </button>
+              </ChatTooltip>
+          </div>
           <TabsList activeTab={activeTab} onTabChange={setActiveTab} />
-          <div className="overflow-y-auto flex-1 custom-scrollbar">
+          <ScrollArea className="flex-1">
               {activeTab === 'notes' ? (
                   <div className="p-4 flex flex-col gap-3">
                       {notes.length === 0 ? <div className="text-[#8696a0] text-sm italic text-center mt-10">No saved notes yet</div> : 
@@ -403,28 +455,61 @@ function Home() {
                       ))}
                   </div>
               ) : (
-                  <>
+                  <div className="flex flex-col">
                       {filteredContacts.length === 0 && <div className="p-4 text-gray-400 text-sm">No chats found</div>}
-                      {filteredContacts.map(c => (
+                      {filteredContacts.map((c, idx) => (
                         <ContextMenu key={c.id}>
                           <ContextMenuTrigger>
-                            <div onClick={() => selectContact(c.id)} className={`flex items-center p-3 cursor-pointer hover:bg-[#202c33] border-l-4 ${activeContact?.id === c.id ? 'bg-[#2a3942] border-teal-500' : 'border-transparent'}`}>
-                              <div className="w-12 h-12 rounded-full bg-linear-to-br from-teal-500/20 to-teal-500/10 border border-teal-500/20 mr-3 flex items-center justify-center text-teal-400 font-bold relative shrink-0 text-xs">
-                                {c.id.slice(-2)}
-                                {c.isFavorite && <span className="absolute -top-1 -right-1 text-[10px] bg-[#111b21] rounded-full p-0.5 border border-white/5 shadow-xl">⭐</span>}
-                              </div>
-                              <div className="flex-1 min-w-0 border-b border-white/5 pb-3">
+                            <div onClick={() => selectContact(c.id)} className={`flex items-center p-3 cursor-pointer hover:bg-[#202c33] transition-colors group/contact ${activeContact?.id === c.id ? 'bg-[#2a3942]' : ''}`}>
+                              <Avatar className="w-12 h-12 mr-3 relative shrink-0 ring-2 ring-transparent group-hover/contact:ring-teal-500/30 transition-all">
+                                <AvatarImage src={`https://api.dicebear.com/7.x/notionists/svg?seed=${c.id}`} />
+                                <AvatarFallback className="bg-[#182229] border-teal-500/20">{c.id.slice(-2).toUpperCase()}</AvatarFallback>
+                                <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#111b21] ${status === 'Connected' ? 'bg-green-500' : 'bg-gray-500'}`} />
+                              </Avatar>
+                              <div className="flex-1 min-w-0 pr-1">
                                 <div className="flex justify-between items-baseline mb-0.5">
-                                  <span className="text-[#e9edef] text-[15.5px] font-medium truncate">{getDisplayName(c)}</span>
-                                  <span className="text-[#8696a0] text-[10px] uppercase font-bold ml-2">
-                                    {c.lastMessage && new Date(c.lastMessage.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
-                                  </span>
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    <span className="text-[#e9edef] text-[15.5px] font-medium truncate">{getDisplayName(c)}</span>
+                                    {c.isFavorite && <Star className="w-3 h-3 text-teal-500 fill-teal-500" />}
+                                  </div>
+                                  <div className="flex flex-col items-end gap-1.5">
+                                    <span className="text-[#8696a0] text-[10px] whitespace-nowrap opacity-60 font-medium">
+                                      {c.lastMessage && new Date(c.lastMessage.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                    </span>
+                                    {Math.random() > 0.8 && (
+                                       <Badge variant="default" className="w-5 h-5 flex items-center justify-center p-0 text-[10px] bg-teal-500 text-[#111b21] hover:bg-teal-500">
+                                         {Math.floor(Math.random() * 3) + 1}
+                                       </Badge>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="text-[#8696a0] text-[13px] truncate opacity-70">
-                                  {c.lastMessage?.type === 'text' ? c.lastMessage.content : c.lastMessage?.type === 'audio' ? '🎤 Voice Note' : c.lastMessage?.type === 'image' ? '📷 Photo' : <i>{c.lastMessage?.type}</i>}
+                                <div className="flex justify-between items-center gap-2">
+                                  <div className="text-[#8696a0] text-[13px] truncate opacity-70 flex-1">
+                                    {c.lastMessage?.type === 'text' ? c.lastMessage.content : c.lastMessage?.type === 'audio' ? '🎤 Voice Note' : c.lastMessage?.type === 'image' ? '📷 Photo' : <i>{c.lastMessage?.type}</i>}
+                                  </div>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <button className="opacity-0 group-hover/contact:opacity-100 p-1 hover:bg-white/10 rounded-full transition-all">
+                                        <MoreVertical className="w-4 h-4 text-[#8696a0]" />
+                                      </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="w-48 bg-[#233138] border-white/5">
+                                      <DropdownMenuItem onClick={() => sdk.toggleFavorite(c.id)} className="gap-3">
+                                        <Star className="w-4 h-4" /> {c.isFavorite ? "Unfavorite" : "Favorite"}
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => { selectContact(c.id); setRenameValue(getDisplayName(c)); setIsRenameOpen(true); }} className="gap-3">
+                                        <Edit2 className="w-4 h-4" /> Rename
+                                      </DropdownMenuItem>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem className="gap-3 text-red-400 focus:text-red-400">
+                                        <Trash2 className="w-4 h-4" /> Delete Chat
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </div>
                               </div>
                             </div>
+                            {idx < filteredContacts.length - 1 && <Separator className="ml-[72px] opacity-10" />}
                           </ContextMenuTrigger>
                           <ContextMenuContent className="bg-[#202c33] border-none text-[#e9edef] w-48 p-1.5 rounded-2xl shadow-2xl ring-1 ring-white/5">
                             <ContextMenuItem onClick={() => sdk.toggleFavorite(c.id)} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[#2a3942] cursor-pointer group/item">
@@ -438,9 +523,9 @@ function Home() {
                           </ContextMenuContent>
                         </ContextMenu>
                       ))}
-                  </>
+                  </div>
               )}
-          </div>
+          </ScrollArea>
       </div>
   );
 
@@ -469,7 +554,7 @@ function Home() {
                         {(() => {
                             const grouped: Record<string, Message[]> = {};
                             activeMessages.forEach(msg => {
-                                const date = new Date(msg.timestamp * 1000).toLocaleDateString();
+                                const date = new Date(msg.timestamp).toLocaleDateString();
                                 if (!grouped[date]) grouped[date] = [];
                                 grouped[date].push(msg);
                             });
@@ -509,6 +594,22 @@ function Home() {
                     <div className="h-24 bg-[#202c33] border-t border-gray-700 flex items-center px-4 gap-2 justify-center relative">{attachmentDrafts.map((d, i) => <div key={i} onClick={() => setCurrentDraftIndex(i)} className={`w-12 h-12 rounded overflow-hidden cursor-pointer ${currentDraftIndex === i ? 'ring-2 ring-teal-500' : 'opacity-70'}`}>{d.type === 'image' ? <img src={d.preview} className="w-full h-full object-cover" /> : <FileText className="w-full h-full p-2 text-white"/>}</div>)}<button onClick={sendMessage} className="absolute right-4 bottom-4 bg-teal-500 text-white rounded-full p-3"><svg viewBox="0 0 24 24" height="24" width="24"><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg></button></div>
                 </div>
             )}
+            {isAttachmentOpen && (
+                <div className="absolute bottom-20 left-4 bg-[#233138] rounded-2xl p-4 shadow-2xl flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-4 duration-200 z-50 ring-1 ring-white/10">
+                    <button onClick={() => { fileInputRef.current?.click(); setIsAttachmentOpen(false); }} className="flex items-center gap-4 text-[#e9edef] hover:bg-[#182229] p-3 rounded-xl transition-all group">
+                        <div className="w-12 h-12 rounded-full bg-linear-to-br from-[#7f66ff] to-[#5136ff] flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform"><FileText className="w-6 h-6 text-white" /></div>
+                        <span className="font-medium text-[15px]">Document</span>
+                    </button>
+                    <button onClick={() => { fileInputRef.current?.click(); setIsAttachmentOpen(false); }} className="flex items-center gap-4 text-[#e9edef] hover:bg-[#182229] p-3 rounded-xl transition-all group">
+                        <div className="w-12 h-12 rounded-full bg-linear-to-br from-[#007aff] to-[#0051ff] flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform"><Image className="w-6 h-6 text-white" /></div>
+                        <span className="font-medium text-[15px]">Photos & Videos</span>
+                    </button>
+                    <button className="flex items-center gap-4 text-[#e9edef] hover:bg-[#182229] p-3 rounded-xl transition-all group opacity-50 cursor-not-allowed">
+                        <div className="w-12 h-12 rounded-full bg-linear-to-br from-[#ff3b30] to-[#d70015] flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform"><Camera className="w-6 h-6 text-white" /></div>
+                        <span className="font-medium text-[15px]">Camera</span>
+                    </button>
+                </div>
+            )}
             <div className="flex items-center gap-2 w-full">
                 <button onClick={() => setIsAttachmentOpen(!isAttachmentOpen)} className={`p-2 rounded-full ${isAttachmentOpen ? "bg-[#2a3942] text-[#e9edef]" : "text-[#8696a0] hover:text-[#e9edef]"}`}><Paperclip className="w-6 h-6 rotate-45" /></button>
                 <input type="file" ref={fileInputRef} className="hidden" onChange={(e) => {
@@ -525,10 +626,34 @@ function Home() {
                 ) : !isWindowOpen ? (
                     <div className="flex-1 flex items-center justify-between gap-4 bg-[#1f2428] rounded-lg px-4 py-2 border border-yellow-600/30"><span className="text-yellow-500 text-xs">⚠️ 24h Window Closed</span><button onClick={openTemplateModal} className="text-xs bg-teal-600 text-white px-3 py-2 rounded">Send Template</button></div>
                 ) : (
-                    <>
-                        <input value={inputText} onChange={handleInputChange} onKeyDown={(e) => e.key === 'Enter' && sendMessage()} placeholder="Type a message" className="flex-1 bg-[#2a3942] text-[#e9edef] rounded-lg px-4 py-2 text-sm focus:outline-none" />
-                        {inputText.trim() ? <button onClick={sendMessage} className="p-2 text-[#8696a0] hover:text-white"><svg viewBox="0 0 24 24" height="24" width="24"><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg></button> : <button onClick={startRecording} className="p-2 text-[#8696a0] hover:text-white"><Mic className="w-6 h-6" /></button>}
-                    </>
+                  <>
+                      <Input value={inputText} onChange={handleInputChange} onKeyDown={(e) => e.key === 'Enter' && sendMessage()} placeholder="Type a message" className="flex-1 bg-[#2a3942] border-none text-[#e9edef] focus-visible:ring-1 focus-visible:ring-teal-500/50" />
+                      <div className="flex items-center gap-1">
+                          <ChatTooltip label="Send Template">
+                              <button onClick={openTemplateModal} className="p-2 text-[#8696a0] hover:text-teal-500 transition-colors">
+                                  <PlusCircle className="w-5 h-5" />
+                              </button>
+                          </ChatTooltip>
+                          <ChatTooltip label="Quick Reply Buttons">
+                              <button onClick={() => setIsInteractiveDrawerOpen(true)} className="p-2 text-[#8696a0] hover:text-yellow-500 transition-colors">
+                                  <Zap className="w-5 h-5" />
+                              </button>
+                          </ChatTooltip>
+                          {inputText.trim() ? (
+                              <ChatTooltip label="Send">
+                                  <button onClick={sendMessage} className="p-2 text-[#8696a0] hover:text-white">
+                                      <svg viewBox="0 0 24 24" height="24" width="24"><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg>
+                                  </button>
+                              </ChatTooltip>
+                          ) : (
+                              <ChatTooltip label="Voice Message">
+                                  <button onClick={startRecording} className="p-2 text-[#8696a0] hover:text-white">
+                                      <Mic className="w-6 h-6" />
+                                  </button>
+                              </ChatTooltip>
+                          )}
+                      </div>
+                  </>
                 )}
             </div>
         </div>
@@ -567,16 +692,56 @@ function Home() {
         </div>
 
         {/* Interactive Drawer */}
-        <div className={`absolute bottom-0 left-0 right-0 bg-[#202c33] z-20 transition-all duration-300 ${isInteractiveDrawerOpen ? "h-[500px]" : "h-0"} overflow-hidden`}>
+        <div className={`absolute bottom-0 left-0 right-0 bg-[#202c33] z-20 transition-all duration-300 ${isInteractiveDrawerOpen ? "h-[500px]" : "h-0"} overflow-hidden shadow-2xl`}>
             {isInteractiveDrawerOpen && (
-                <div className="flex flex-col h-full p-4">
-                    <div className="h-10 flex items-center justify-between mb-4"><span className="text-white font-bold">Quick Buttons</span><button onClick={() => setIsInteractiveDrawerOpen(false)}>✕</button></div>
-                    <div className="space-y-4">
-                        <textarea value={interactiveDraft.body} onChange={e => setInteractiveDraft(p => ({ ...p, body: e.target.value }))} placeholder="Body message" className="w-full bg-[#2a3942] border-none text-white p-3 rounded h-24 focus:outline-none"/>
-                        <div className="space-y-2">
-                            {interactiveDraft.buttons.map((b, i) => <Input key={i} value={b} onChange={e => { const n = [...interactiveDraft.buttons]; n[i] = e.target.value; setInteractiveDraft(p => ({ ...p, buttons: n })); }} placeholder={`Button ${i+1}`} className="bg-[#2a3942] border-none text-white"/>)}
+                <div className="flex flex-col h-full bg-[#111b21]">
+                    <div className="h-14 flex items-center justify-between px-4 border-b border-[#2a3942] bg-[#202c33]">
+                        <div className="flex items-center gap-2">
+                            <Zap className="w-5 h-5 text-yellow-500" />
+                            <span className="font-medium text-[#e9edef]">Quick Buttons</span>
                         </div>
-                        <Button onClick={handleSendInteractive} className="w-full bg-[#00a884] hover:bg-[#008f6f]">Send Interactive</Button>
+                        <button onClick={() => setIsInteractiveDrawerOpen(false)} className="text-[#8696a0] hover:text-white transition-colors">✕</button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 custom-scrollbar lg:px-20">
+                        <div className="max-w-xl mx-auto space-y-4 pb-10">
+                            <div className="space-y-1.5">
+                                <Label className="text-[10px] uppercase font-bold text-[#8696a0] ml-1">Header (Optional)</Label>
+                                <Input value={interactiveDraft.header} onChange={e => setInteractiveDraft(p => ({ ...p, header: e.target.value }))} placeholder="Title text..." className="bg-[#2a3942] border-none text-white focus-visible:ring-teal-500" />
+                            </div>
+                            
+                            <div className="space-y-1.5">
+                                <Label className="text-[10px] uppercase font-bold text-[#8696a0] ml-1">Body Message</Label>
+                                <textarea value={interactiveDraft.body} onChange={e => setInteractiveDraft(p => ({ ...p, body: e.target.value }))} placeholder="Type your message here..." className="w-full bg-[#2a3942] border-none text-[#e9edef] p-3 rounded-lg h-32 focus:outline-none focus:ring-1 focus:ring-teal-500 text-sm leading-relaxed" />
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <Label className="text-[10px] uppercase font-bold text-[#8696a0] ml-1">Buttons (Max 3)</Label>
+                                <div className="space-y-2">
+                                    {interactiveDraft.buttons.map((b, i) => (
+                                        <div key={i} className="relative group">
+                                            <Input value={b} onChange={e => { const n = [...interactiveDraft.buttons]; n[i] = e.target.value; setInteractiveDraft(p => ({ ...p, buttons: n })); }} placeholder={`Button ${i+1} title`} className="bg-[#2a3942] border-none text-white pr-10 focus-visible:ring-teal-500" />
+                                            {interactiveDraft.buttons.length > 1 && (
+                                                <button onClick={() => setInteractiveDraft(p => ({ ...p, buttons: p.buttons.filter((_, idx) => idx !== i) }))} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">✕</button>
+                                            )}
+                                        </div>
+                                    ))}
+                                    {interactiveDraft.buttons.length < 3 && (
+                                        <button onClick={() => setInteractiveDraft(p => ({ ...p, buttons: [...p.buttons, ""] }))} className="w-full border border-dashed border-gray-700 p-2 rounded-lg text-xs text-gray-500 hover:text-teal-500 hover:border-teal-500 transition-all flex items-center justify-center gap-2">
+                                            <PlusCircle className="w-3 h-3" /> Add Button
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <Label className="text-[10px] uppercase font-bold text-[#8696a0] ml-1">Footer (Optional)</Label>
+                                <Input value={interactiveDraft.footer} onChange={e => setInteractiveDraft(p => ({ ...p, footer: e.target.value }))} placeholder="Disclaimers or smaller text..." className="bg-[#2a3942] border-none text-[#8696a0] text-xs focus-visible:ring-teal-500" />
+                            </div>
+
+                            <Button onClick={handleSendInteractive} disabled={!interactiveDraft.body || interactiveDraft.buttons.every(b => !b.trim())} className="w-full bg-[#00a884] hover:bg-[#008f6f] text-white font-bold py-6 rounded-xl shadow-lg hover:shadow-teal-500/20 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                                Send Interactive Message
+                            </Button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -590,7 +755,7 @@ function Home() {
   );
 
   return (
-    <>
+    <TooltipProvider>
       <ChatLayout sidebar={renderSidebar} activeChat={renderChat} isConnected={status === "Connected"} />
       <audio ref={remoteAudioRef} className="fixed bottom-0 left-0 w-1 h-1 opacity-0 pointer-events-none" playsInline autoPlay />
       
@@ -614,6 +779,23 @@ function Home() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={isNewChatOpen} onOpenChange={setIsNewChatOpen}>
+        <DialogContent className="sm:max-w-[425px] bg-[#202c33] border-gray-700 text-[#e9edef]">
+          <DialogHeader><DialogTitle>Start New Chat</DialogTitle></DialogHeader>
+          <div className="py-4 flex flex-col gap-4">
+              <Label className="text-xs text-[#8696a0]">Enter WhatsApp Number (with country code)</Label>
+              <Input 
+                  value={newChatValue} 
+                  onChange={(e) => setNewChatValue(e.target.value)} 
+                  placeholder="e.g. 923135502848"
+                  className="bg-[#2a3942] border-gray-600 text-white" 
+                  onKeyDown={(e) => e.key === 'Enter' && startNewChat()}
+              />
+          </div>
+          <DialogFooter><Button onClick={startNewChat} className="bg-[#00a884] hover:bg-[#008f6f]">Start Chat</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Connectivity Debugger */}
       {callState.isOpen && (
           <div className="fixed top-4 right-4 bg-black/80 text-white p-2 text-xs rounded z-50 max-w-xs font-mono border border-gray-700 shadow-xl">
@@ -628,6 +810,6 @@ function Home() {
               </div>
           </div>
       )}
-    </>
+    </TooltipProvider>
   );
 }

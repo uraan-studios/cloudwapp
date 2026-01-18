@@ -1,93 +1,40 @@
 import { api } from "./eden-client";
-type Listener = (...args: any[]) => void;
+import { ChatSDK as BaseSDK, type Message, type Contact } from "@repo/chatsdk";
+import { useState, useEffect, useCallback, useMemo } from 'react';
 
-class EventEmitter {
-  private events: Map<string, Listener[]> = new Map();
+export { type Message, type Contact };
 
-  on(event: string, listener: Listener) {
-    if (!this.events.has(event)) {
-      this.events.set(event, []);
-    }
-    this.events.get(event)!.push(listener);
-    return this;
-  }
-
-  off(event: string, listener: Listener) {
-    const listeners = this.events.get(event);
-    if (listeners) {
-      this.events.set(event, listeners.filter((l) => l !== listener));
-    }
-    return this;
-  }
-
-  emit(event: string, ...args: any[]) {
-    const listeners = this.events.get(event);
-    if (listeners) {
-      listeners.forEach((l) => l(...args));
-    }
-    return true;
-  }
-}
-
-
-export interface Message {
-  id: string;
-  from: string;
-  to: string;
-  type: "text" | "image" | "audio" | "video" | "document" | "sticker" | "unknown" | "template" | "interactive";
-  content: string;
-  timestamp: number;
-  status: "sent" | "delivered" | "read" | "failed";
-  direction: "incoming" | "outgoing";
-  reactions?: Record<string, string>;
-  context?: { message_id: string };
-}
-
-export interface Contact {
-  id: string;
-  name?: string;
-  pushName?: string;
-  customName?: string;
-  isFavorite?: boolean;
-  lastMessage?: Message;
-  lastUserMsgTimestamp?: number;
-}
-
-export interface CallState {
-    isOpen: boolean;
-    type: 'incoming' | 'outgoing' | 'active';
-    callId?: string;
-    remoteSdp?: string;
-    contactName: string;
-    stream?: MediaStream;
-}
-
-export class ChatSDK extends EventEmitter {
+export class ChatSDK extends BaseSDK {
     private chat: ReturnType<typeof api.chat.subscribe> | null = null;
-    private contacts: Contact[] = [];
-    private messages: Message[] = [];
-    private activeContactId: string | null = null;
-    private status: "Connected" | "Disconnected" = "Disconnected";
 
     constructor() {
-        super();
+        super({ debug: true });
         this.init();
     }
 
     private init() {
+        console.log("[ChatSDK] Initializing connection...");
+        this.setStatus("Connecting");
         this.chat = api.chat.subscribe();
         
         this.chat.on("open", () => {
-            this.status = "Connected";
-            this.emit("status", this.status);
+            console.log("[ChatSDK] WebSocket Open");
+            this.setStatus("Connected");
+            this.emit("open", {});
         });
 
         this.chat.on("close", () => {
-            this.status = "Disconnected";
-            this.emit("status", this.status);
+            console.log("[ChatSDK] WebSocket Closed");
+            this.setStatus("Disconnected");
+        });
+
+        this.chat.on("error", (err) => {
+            console.error("[ChatSDK] WebSocket Error:", err);
+            this.setStatus("Disconnected");
         });
 
         this.chat.subscribe((response: any) => {
+            console.log("[ChatSDK] Received message:", response);
             let parsed: any = {};
             try {
                 if (response && response.data && typeof response.data === 'string') {
@@ -112,64 +59,49 @@ export class ChatSDK extends EventEmitter {
     private handleWebSocketMessage(type: string, data: any, raw: any) {
         switch (type) {
             case "contacts":
-                this.contacts = data.data || data;
-                this.emit("contacts", this.contacts);
+                this.updateContacts(data.data || data);
                 break;
             
             case "messages_loaded":
                 const { contactId, data: loadedMsgs, nextCursor } = raw;
-                if (contactId === this.activeContactId) {
-                    this.appendMessages(loadedMsgs);
-                    this.emit("messages_loaded", { contactId, messages: this.messages, nextCursor });
-                }
+                this.handleMessagesLoaded(contactId, loadedMsgs, nextCursor);
                 break;
 
             case "message":
-                const msg = data.data || data;
-                this.updateMessageInList(msg);
-                this.updateContactWithNewMessage(msg);
+                this.handleIncomingMessage(data.data || data);
                 break;
 
             case "status":
                 const { id, status } = data || raw;
-                this.messages = this.messages.map(m => m.id === id ? { ...m, status } : m);
-                this.emit("messages", this.messages);
+                this.handleStatusUpdate(id, status);
                 break;
 
             case "reaction":
                 const { messageId, from, emoji } = data || raw;
-                this.messages = this.messages.map(m => {
-                    if (m.id === messageId) {
-                        return { ...m, reactions: { ...m.reactions, [from]: emoji } };
-                    }
-                    return m;
-                });
-                this.emit("messages", this.messages);
+                this.handleReaction(messageId, from, emoji);
                 break;
 
             case "id_update":
                 const { oldId, newId } = data || raw;
-                this.messages = this.messages.map(m => {
-                    let updated = m.id === oldId ? { ...m, id: newId } : m;
-                    if (updated.context?.message_id === oldId) {
-                        updated = { ...updated, context: { ...updated.context, message_id: newId } };
-                    }
-                    return updated;
-                });
-                this.emit("messages", this.messages);
+                this.handleIdUpdate(oldId, newId);
                 break;
 
             case "contact_update":
-                const { id: cId, customName } = data || data.data || raw.data;
-                this.contacts = this.contacts.map(c => c.id === cId ? { ...c, customName } : c);
-                this.emit("contacts", this.contacts);
+                const { id: cId, ...updates } = data || data.data || raw.data;
+                this.updateContact(cId, updates);
                 break;
 
             case "call_answered":
             case "call_incoming":
             case "call_ended":
             case "call_created":
-                this.emit("call_event", { type, data: data.data || data });
+                this.emit("call_event", { 
+                    type, 
+                    data: {
+                        ...(data.data || data),
+                        timestamp: Date.now()
+                    }
+                });
                 break;
             
             case "error":
@@ -178,50 +110,10 @@ export class ChatSDK extends EventEmitter {
         }
     }
 
-    private updateMessageInList(msg: Message) {
-        if (this.activeContactId && (msg.from === this.activeContactId || msg.to === this.activeContactId)) {
-            if (this.messages.find(m => m.id === msg.id)) return;
-            this.messages = [...this.messages, msg].sort((a, b) => a.timestamp - b.timestamp);
-            this.emit("messages", this.messages);
-        }
-    }
+    // --- Actions ---
 
-    private updateContactWithNewMessage(msg: Message) {
-        const contactId = msg.direction === 'incoming' ? msg.from : msg.to;
-        const idx = this.contacts.findIndex(c => c.id === contactId);
-        
-        let updatedContact: Contact;
-        if(idx >= 0) {
-            updatedContact = { 
-                ...this.contacts[idx], 
-                lastMessage: msg,
-                lastUserMsgTimestamp: msg.direction === 'incoming' ? msg.timestamp : this.contacts[idx].lastUserMsgTimestamp
-            };
-            this.contacts.splice(idx, 1);
-            this.contacts.unshift(updatedContact);
-        } else {
-            updatedContact = { 
-                id: contactId, 
-                lastMessage: msg,
-                lastUserMsgTimestamp: msg.direction === 'incoming' ? msg.timestamp : 0
-            };
-            this.contacts.unshift(updatedContact);
-        }
-        this.emit("contacts", this.contacts);
-    }
-
-    private appendMessages(loadedMsgs: Message[]) {
-        const merged = [...this.messages, ...loadedMsgs];
-        const unique = Array.from(new Map(merged.map(m => [m.id, m])).values());
-        this.messages = unique.sort((a, b) => a.timestamp - b.timestamp);
-        this.emit("messages", this.messages);
-    }
-
-    // Public Methods
     public setActiveContact(contactId: string | null) {
-        this.activeContactId = contactId;
-        this.messages = [];
-        this.emit("messages", this.messages);
+        super.setActiveContact(contactId);
         if (contactId) {
             this.chat?.send({ type: 'get_messages', contactId, limit: 50 });
         }
@@ -244,11 +136,7 @@ export class ChatSDK extends EventEmitter {
     }
 
     public sendText(to: string, text: string, replyingToId?: string) {
-        this.sendMessage(to, {
-            type: "text",
-            content: text,
-            context: replyingToId ? { message_id: replyingToId } : undefined
-        });
+        this.sendMessage(to, ChatSDK.createTextMessage(to, text, replyingToId));
     }
 
     public sendTyping(to: string, state: boolean) {
@@ -271,7 +159,6 @@ export class ChatSDK extends EventEmitter {
         this.chat?.send({ type: 'toggle_favorite', contactId });
     }
 
-    // Signaling for calls
     public startCall(to: string, sdp: string) {
         this.chat?.send({ type: 'call_start', to, sdp });
     }
@@ -287,22 +174,32 @@ export class ChatSDK extends EventEmitter {
     public close() {
         this.chat?.close();
     }
+
+    public reconnect() {
+        this.close();
+        this.init();
+    }
 }
 
-// Hook abstraction
-import { useState, useEffect, useCallback, useMemo } from 'react';
+const sdkInstance = new ChatSDK();
 
+// Hook abstraction
 export function useChat() {
-    const sdk = useMemo(() => new ChatSDK(), []);
-    const [contacts, setContacts] = useState<Contact[]>([]);
+    const sdk = sdkInstance;
+    const [contacts, setContacts] = useState<Contact[]>(sdk.getContacts());
     const [messages, setMessages] = useState<Message[]>([]);
-    const [status, setStatus] = useState<string>("Disconnected");
-    const [activeContactId, setActiveContactId] = useState<string | null>(null);
+    const [status, setStatus] = useState<string>(sdk.getStatus());
+    const [activeContactId, setActiveContactId] = useState<string | null>(sdk.getActiveContactId());
     const [nextCursor, setNextCursor] = useState<number | null>(null);
     const [hasMore, setHasMore] = useState(false);
-    const [callEvent, setCallEvent] = useState<{type: string, data: any} | null>(null);
+    const [callEvent, setCallEvent] = useState<any | null>(null);
 
     useEffect(() => {
+        // Sync initial messages if there's an active contact
+        if (activeContactId) {
+            setMessages(sdk.getMessages(activeContactId));
+        }
+        
         const onContacts = (c: Contact[]) => setContacts([...c]);
         const onMessages = (m: Message[]) => setMessages([...m]);
         const onStatus = (s: string) => setStatus(s);
@@ -310,7 +207,7 @@ export function useChat() {
             setNextCursor(cursor);
             setHasMore(!!cursor);
         };
-        const onCallEvent = (event: {type: string, data: any}) => setCallEvent(event);
+        const onCallEvent = (event: any) => setCallEvent(event);
 
         sdk.on("contacts", onContacts);
         sdk.on("messages", onMessages);
@@ -324,7 +221,6 @@ export function useChat() {
             sdk.off("status", onStatus);
             sdk.off("messages_loaded", onMessagesLoaded);
             sdk.off("call_event", onCallEvent);
-            sdk.close();
         };
     }, [sdk]);
 

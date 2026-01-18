@@ -23,7 +23,8 @@
     "noUncheckedSideEffectImports": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@repo/chatsdk": ["../../packages/chatsdk/src/index.ts"]
     }
   }
 }

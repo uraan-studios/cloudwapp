@@ -3,8 +3,9 @@ import { appendFile, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { storage, type Message } from "./services/storage";
+import { storage } from "./services/storage";
 import { meta } from "./services/meta";
+import { ChatSDK, type Message, type Contact, type CallEvent } from "@repo/chatsdk";
 
 // Ensure temp directory exists
 const TEMP_DIR = join(import.meta.dir, "../temp_uploads");
@@ -286,8 +287,8 @@ const app = new Elysia()
             const outgoingMsg: Message = {
                 id: "wamid_" + Date.now(), 
                 from: "me",
-                to: message.to,
-                type: message.type,
+                to: message.to as string,
+                type: message.type as any,
                 content: content,
                 timestamp: Date.now(),
                 status: "sent",
@@ -320,7 +321,9 @@ const app = new Elysia()
             if (message.type === 'template') {
                 res = await meta.sendTemplate(message.to, message.templateName, message.languageCode, message.components);
             } else if (message.type === 'interactive') {
+                console.log(`[Index] Sending interactive to ${message.to}:`, JSON.stringify(message.interactive));
                 res = await meta.sendInteractive(message.to, message.interactive);
+                if (!res || res.error) console.error(`[Index] Meta Interactive Error:`, res?.error || "Unknown");
             } else {
                 // Send to Meta normally
                 res = await meta.sendMessage(message.to, { 

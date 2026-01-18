@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { 
-    Play, Pause, MoreVertical, Reply, Check, CheckCheck, FileIcon, Volume2, 
+    Play, Pause, Reply, Check, CheckCheck, FileIcon, Volume2, 
     Smile, Copy, Star, Trash2, Pin, Forward, BookMarked, ChevronDown 
 } from "lucide-react";
 import {
@@ -27,9 +27,8 @@ interface MessageBubbleProps {
 const StaticWaveform: React.FC<{ 
     src: string, 
     progress: number, 
-    isPlaying: boolean,
     onSeek: (percent: number) => void 
-}> = ({ src, progress, isPlaying, onSeek }) => {
+}> = ({ src, progress, onSeek }) => {
     const [peaks, setPeaks] = useState<number[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -163,7 +162,6 @@ const AudioPlayer: React.FC<{ src: string }> = ({ src }) => {
                 <StaticWaveform 
                     src={src} 
                     progress={progress} 
-                    isPlaying={isPlaying} 
                     onSeek={handleSeek}
                 />
                 <div className="flex justify-between items-center px-0.5">
@@ -201,7 +199,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const isMe = message.direction === "outgoing";
-  const time = new Date(message.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase();
+  const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase();
   
   const quotedMessage = message.context?.message_id 
     ? allMessages.find(m => m.id === message.context?.message_id) 

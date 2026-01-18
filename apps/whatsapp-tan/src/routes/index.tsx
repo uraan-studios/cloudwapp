@@ -21,20 +21,18 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Paperclip, FileText, Mic, Phone, Video, Trash2, Star, Edit2, Image, Camera, Zap, PlusCircle, MessageSquarePlus } from "lucide-react";
+import { Paperclip, FileText, Mic, Phone, Video, Trash2, Star, Edit2, Image, Camera, Zap, PlusCircle, MessageSquarePlus, X, Info, Search, LayoutList, Calendar, Bookmark } from "lucide-react";
 import { useChat, type Message, type Contact } from "../lib/chat-sdk";
 import { useWebRTC } from "../lib/use-webrtc";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
-import { MoreVertical, Settings, LogOut, User, Archive, BellOff, MessageSquare } from "lucide-react";
+import { MoreVertical } from "lucide-react";
 
-export const Route = createFileRoute('/')({
-  component: Home,
-})
+
 
 const ChatTooltip = ({ label, children }: { label: string, children: React.ReactNode }) => (
     <Tooltip>
@@ -53,7 +51,10 @@ function Home() {
     loadMore, 
     hasMore, 
     sdk,
-    callEvent 
+    callEvent,
+    tabs,
+    contactNotes,
+    starredMessages
   } = useChat();
 
   // Pure UI States
@@ -73,7 +74,11 @@ function Home() {
   const [attachmentDrafts, setAttachmentDrafts] = useState<{ file: File, preview: string, type: 'image' | 'video' | 'audio' | 'document', caption: string }[]>([]);
   const [currentDraftIndex, setCurrentDraftIndex] = useState(0);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
-  const [notes, setNotes] = useState<{ id: string, content: string, timestamp: number }[]>([]);
+  const [isNewTabOpen, setIsNewTabOpen] = useState(false);
+  const [newTabName, setNewTabName] = useState("");
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [profileSection, setProfileSection] = useState<'info' | 'starred' | 'notes'>('info');
+  const [noteInput, setNoteInput] = useState("");
 
   // Template/Interactive States
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
@@ -205,9 +210,23 @@ function Home() {
       }
   };
 
-  // Actions
-  const handleAddNote = (content: string) => {
-      setNotes(prev => [{ id: Math.random().toString(36).substr(2, 9), content, timestamp: Date.now() }, ...prev]);
+  // Fetch Notes/Starred on contact change
+  useEffect(() => {
+     if (activeContact) {
+         sdk.getNotes(activeContact.id);
+         sdk.getStarredMessages(activeContact.id);
+     }
+  }, [activeContact?.id]);
+
+  const handleAddNote = () => {
+      if (!activeContact || !noteInput.trim()) return;
+      sdk.addNote(activeContact.id, noteInput);
+      setNoteInput("");
+  };
+
+  const handleToggleStar = (msgId: string, isStarred: boolean) => {
+      sdk.starMessage(msgId, isStarred);
+      if (activeContact) sdk.getStarredMessages(activeContact.id);
   };
 
   const startRecording = async () => {
@@ -355,6 +374,19 @@ function Home() {
       }
   };
 
+  const handleCreateTab = () => {
+      if (newTabName.trim()) {
+          sdk.createTab(newTabName);
+          setIsNewTabOpen(false);
+          setNewTabName("");
+      }
+  };
+
+  const handleDeleteTab = (id: string) => {
+      sdk.deleteTab(id);
+      if (activeTab === id) setActiveTab("all");
+  };
+
   const openTemplateModal = () => {
       setIsTemplateModalOpen(true);
       if (templates.length === 0) {
@@ -422,8 +454,12 @@ function Home() {
           const q = searchQuery.toLowerCase();
           if (!getDisplayName(c).toLowerCase().includes(q) && !c.id.toLowerCase().includes(q)) return false;
       }
+      
+      if (activeTab === 'all') return true;
       if (activeTab === 'favs') return c.isFavorite;
-      return true;
+      
+      // Custom Tab Filtering
+      return c.tabId === activeTab;
   }), [contacts, searchQuery, activeTab]);
 
   const renderSidebar = (
@@ -433,31 +469,26 @@ function Home() {
               <ChatTooltip label="New Chat">
                 <button 
                     onClick={() => setIsNewChatOpen(true)}
-                    className="p-2 bg-[#202c33] hover:bg-[#2a3942] text-teal-500 rounded-lg transition-all active:scale-95 shadow-lg border border-white/5"
+                    className="w-10 h-10 flex items-center justify-center bg-[#202c33] hover:bg-[#2a3942] text-teal-500 rounded-lg transition-all active:scale-95 shadow-lg border border-white/5 shrink-0"
                 >
                     <MessageSquarePlus className="w-5 h-5" />
                 </button>
               </ChatTooltip>
           </div>
-          <TabsList activeTab={activeTab} onTabChange={setActiveTab} />
+          <TabsList 
+              activeTab={activeTab} 
+              onTabChange={setActiveTab} 
+              tabs={tabs} 
+              onCreateTab={() => setIsNewTabOpen(true)}
+              onDeleteTab={handleDeleteTab}
+          />
           <ScrollArea className="flex-1">
-              {activeTab === 'notes' ? (
-                  <div className="p-4 flex flex-col gap-3">
-                      {notes.length === 0 ? <div className="text-[#8696a0] text-sm italic text-center mt-10">No saved notes yet</div> : 
-                       notes.map(note => (
-                          <div key={note.id} className="bg-[#202c33] p-4 rounded-xl border border-white/5 shadow-xl group">
-                              <p className="text-[#e9edef] text-sm whitespace-pre-wrap">{note.content}</p>
-                              <div className="mt-3 flex justify-between items-center opacity-40 group-hover:opacity-100 transition-opacity">
-                                  <span className="text-[9px] uppercase">{new Date(note.timestamp).toLocaleDateString()}</span>
-                                  <button onClick={() => setNotes(prev => prev.filter(n => n.id !== note.id))} className="p-1 hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
-                              </div>
-                          </div>
-                      ))}
-                  </div>
-              ) : (
-                  <div className="flex flex-col">
-                      {filteredContacts.length === 0 && <div className="p-4 text-gray-400 text-sm">No chats found</div>}
-                      {filteredContacts.map((c, idx) => (
+                <div className="flex flex-col">
+                    {filteredContacts.length === 0 && <div className="p-10 text-center flex flex-col items-center gap-3">
+                        <div className="w-16 h-16 rounded-full bg-[#202c33] flex items-center justify-center text-[#8696a0]"><Search className="w-8 h-8" /></div>
+                        <p className="text-gray-400 text-sm">No chats found in this group</p>
+                    </div>}
+                    {filteredContacts.map((c, idx) => (
                         <ContextMenu key={c.id}>
                           <ContextMenuTrigger>
                             <div onClick={() => selectContact(c.id)} className={`flex items-center p-3 cursor-pointer hover:bg-[#202c33] transition-colors group/contact ${activeContact?.id === c.id ? 'bg-[#2a3942]' : ''}`}>
@@ -467,7 +498,7 @@ function Home() {
                                 <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#111b21] ${status === 'Connected' ? 'bg-green-500' : 'bg-gray-500'}`} />
                               </Avatar>
                               <div className="flex-1 min-w-0 pr-1">
-                                <div className="flex justify-between items-baseline mb-0.5">
+                                <div className="flex justify-between items-baseline mb-1">
                                   <div className="flex items-center gap-1.5 truncate">
                                     <span className="text-[#e9edef] text-[15.5px] font-medium truncate">{getDisplayName(c)}</span>
                                     {c.isFavorite && <Star className="w-3 h-3 text-teal-500 fill-teal-500" />}
@@ -476,17 +507,19 @@ function Home() {
                                     <span className="text-[#8696a0] text-[10px] whitespace-nowrap opacity-60 font-medium">
                                       {c.lastMessage && new Date(c.lastMessage.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
                                     </span>
-                                    {Math.random() > 0.8 && (
-                                       <Badge variant="default" className="w-5 h-5 flex items-center justify-center p-0 text-[10px] bg-teal-500 text-[#111b21] hover:bg-teal-500">
-                                         {Math.floor(Math.random() * 3) + 1}
+                                    {c.unreadCount ? (
+                                       <Badge variant="default" className="w-5 h-5 flex items-center justify-center p-0 text-[10px] bg-teal-500 text-[#111b21] hover:bg-teal-500 transition-all scale-100 animate-in fade-in zoom-in duration-300">
+                                         {c.unreadCount}
                                        </Badge>
+                                    ) : (
+                                       <div className="w-5 h-5" /> // Placeholder to keep layout stable
                                     )}
                                   </div>
                                 </div>
                                 <div className="flex justify-between items-center gap-2">
-                                  <div className="text-[#8696a0] text-[13px] truncate opacity-70 flex-1">
-                                    {c.lastMessage?.type === 'text' ? c.lastMessage.content : c.lastMessage?.type === 'audio' ? '🎤 Voice Note' : c.lastMessage?.type === 'image' ? '📷 Photo' : <i>{c.lastMessage?.type}</i>}
-                                  </div>
+                                    <div className="text-[#8696a0] text-[13px] truncate opacity-70 flex-1 leading-tight">
+                                      {c.lastMessage?.type === 'text' ? c.lastMessage.content : c.lastMessage?.type === 'audio' ? '🎤 Voice Note' : c.lastMessage?.type === 'image' ? '📷 Photo' : <i>{c.lastMessage?.type}</i>}
+                                    </div>
                                   <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
                                       <button className="opacity-0 group-hover/contact:opacity-100 p-1 hover:bg-white/10 rounded-full transition-all">
@@ -500,6 +533,16 @@ function Home() {
                                       <DropdownMenuItem onClick={() => { selectContact(c.id); setRenameValue(getDisplayName(c)); setIsRenameOpen(true); }} className="gap-3">
                                         <Edit2 className="w-4 h-4" /> Rename
                                       </DropdownMenuItem>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuSub>
+                                          <DropdownMenuSubTrigger className="gap-3"><LayoutList className="w-4 h-4" /> Move to Tab</DropdownMenuSubTrigger>
+                                          <DropdownMenuSubContent className="bg-[#233138] border-white/5">
+                                              <DropdownMenuItem onClick={() => sdk.assignContactToTab(c.id, null)}>None (All)</DropdownMenuItem>
+                                              {tabs.filter(t => t.type === 'custom').map(t => (
+                                                  <DropdownMenuItem key={t.id} onClick={() => sdk.assignContactToTab(c.id, t.id)}>{t.name}</DropdownMenuItem>
+                                              ))}
+                                          </DropdownMenuSubContent>
+                                      </DropdownMenuSub>
                                       <DropdownMenuSeparator />
                                       <DropdownMenuItem className="gap-3 text-red-400 focus:text-red-400">
                                         <Trash2 className="w-4 h-4" /> Delete Chat
@@ -520,11 +563,15 @@ function Home() {
                               <Edit2 className="w-4 h-4 text-gray-400 group-hover/item:text-white" />
                               <span className="text-sm font-medium">Rename</span>
                             </ContextMenuItem>
+                            <DropdownMenuSeparator />
+                            <ContextMenuItem onClick={() => setIsProfileOpen(true)} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[#2a3942] cursor-pointer group/item">
+                              <Info className="w-4 h-4 text-gray-400 group-hover/item:text-white" />
+                              <span className="text-sm font-medium">Chat Info</span>
+                            </ContextMenuItem>
                           </ContextMenuContent>
                         </ContextMenu>
                       ))}
                   </div>
-              )}
           </ScrollArea>
       </div>
   );
@@ -540,8 +587,8 @@ function Home() {
                  </div>
              </div>
              <div className="flex items-center gap-4">
-                 <button onClick={startCall} className="text-[#8696a0] hover:text-[#e9edef]"><Phone className="w-5 h-5" /></button>
-                 <button className="text-[#8696a0] hover:text-[#e9edef] opacity-50"><Video className="w-5 h-5" /></button>
+                 <button onClick={startCall} className="text-[#8696a0] hover:text-[#e9edef] transition-all"><Phone className="w-5 h-5" /></button>
+                 <button onClick={() => { setIsProfileOpen(true); setProfileSection('info'); }} className="text-[#8696a0] hover:text-[#e9edef] transition-all"><Info className="w-5 h-5" /></button>
              </div>
         </div>
         <div className="flex-1 relative overflow-hidden bg-[#0b141a]">
@@ -565,7 +612,7 @@ function Home() {
                                     </div>
                                     <div className="flex flex-col gap-1">
                                         {msgs.map(msg => (
-                                            <MessageBubble key={msg.id} message={msg as any} onReply={setReplyingTo} onReact={handleReact} onAddNote={handleAddNote} onQuoteClick={scrollToMessage} allMessages={activeMessages} isHighlighted={highlightedMessageId === msg.id} />
+                                            <MessageBubble key={msg.id} message={msg as any} onReply={setReplyingTo} onReact={handleReact} onAddNote={() => { setIsProfileOpen(true); setProfileSection('notes'); }} onQuoteClick={scrollToMessage} allMessages={activeMessages} isHighlighted={highlightedMessageId === msg.id} onStar={() => handleToggleStar(msg.id, !msg.is_starred as any)} />
                                         ))}
                                     </div>
                                 </div>
@@ -754,10 +801,116 @@ function Home() {
       </div>
   );
 
+  const renderProfile = activeContact && isProfileOpen ? (
+      <div className="flex flex-col h-full bg-[#0b141a] border-l border-white/5">
+          <div className="h-16 bg-[#202c33] flex items-center px-4 shrink-0 gap-4">
+              <button onClick={() => setIsProfileOpen(false)} className="p-2 text-[#8696a0] hover:text-white"><X className="w-6 h-6" /></button>
+              <span className="text-[#e9edef] font-medium">Contact Info</span>
+          </div>
+          <ScrollArea className="flex-1">
+              <div className="flex flex-col items-center p-6 bg-[#202c33] mb-2 shadow-xl">
+                  <Avatar className="w-32 h-32 mb-4 ring-4 ring-teal-500/20">
+                      <AvatarImage src={`https://api.dicebear.com/7.x/notionists/svg?seed=${activeContact.id}`} />
+                      <AvatarFallback className="text-3xl">{activeContact.id.slice(-2)}</AvatarFallback>
+                  </Avatar>
+                  <h2 className="text-[#e9edef] text-xl font-bold">{getDisplayName(activeContact)}</h2>
+                  <p className="text-[#8696a0] text-sm mt-1">+{activeContact.id}</p>
+              </div>
+
+              <div className="flex border-b border-white/5 bg-[#202c33]/50">
+                  <button onClick={() => setProfileSection('info')} className={`flex-1 py-3 text-xs uppercase font-bold tracking-widest transition-all ${profileSection === 'info' ? 'text-teal-500 border-b-2 border-teal-500' : 'text-[#8696a0] hover:text-white'}`}>Details</button>
+                  <button onClick={() => setProfileSection('starred')} className={`flex-1 py-3 text-xs uppercase font-bold tracking-widest transition-all ${profileSection === 'starred' ? 'text-teal-500 border-b-2 border-teal-500' : 'text-[#8696a0] hover:text-white'}`}>Bookmarks</button>
+                  <button onClick={() => setProfileSection('notes')} className={`flex-1 py-3 text-xs uppercase font-bold tracking-widest transition-all ${profileSection === 'notes' ? 'text-teal-500 border-b-2 border-teal-500' : 'text-[#8696a0] hover:text-white'}`}>Timeline</button>
+              </div>
+
+              <div className="p-4">
+                  {profileSection === 'info' && (
+                      <div className="space-y-6 animate-in fade-in duration-300">
+                          <div className="bg-[#202c33] p-4 rounded-xl border border-white/5">
+                              <Label className="text-[10px] uppercase font-bold text-teal-500">About</Label>
+                              <p className="text-[#e9edef] text-sm mt-2 leading-relaxed">Hey there! I am using WhatsApp.</p>
+                          </div>
+                          <div className="bg-[#202c33] p-4 rounded-xl border border-white/5 space-y-3">
+                              <div className="flex justify-between items-center text-xs">
+                                  <span className="text-[#8696a0]">Media, Links & Docs</span>
+                                  <span className="text-teal-500 font-bold">0</span>
+                              </div>
+                              <div className="flex items-center gap-2 overflow-x-auto py-1">
+                                  <div className="w-16 h-16 rounded bg-[#2a3942] animate-pulse" />
+                                  <div className="w-16 h-16 rounded bg-[#2a3942] animate-pulse" />
+                                  <div className="w-16 h-16 rounded bg-[#2a3942] animate-pulse" />
+                              </div>
+                          </div>
+                      </div>
+                  )}
+
+                  {profileSection === 'starred' && (
+                      <div className="space-y-4 animate-in slide-in-from-right duration-300">
+                          {(starredMessages[activeContact.id] || []).length === 0 ? (
+                              <div className="text-center py-20">
+                                  <Bookmark className="w-12 h-12 text-gray-700 mx-auto mb-4 opacity-20" />
+                                  <p className="text-[#8696a0] text-sm">No starred messages yet</p>
+                              </div>
+                          ) : (
+                              starredMessages[activeContact.id].map(msg => (
+                                  <div key={msg.id} className="bg-[#202c33] p-3 rounded-xl border border-white/5 shadow-lg group relative">
+                                      <p className="text-[#e9edef] text-sm leading-relaxed">{msg.content}</p>
+                                      <div className="mt-2 flex justify-between items-center text-[10px] text-[#8696a0]">
+                                          <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                          <button onClick={() => handleToggleStar(msg.id, false)} className="text-teal-500 hover:text-red-500"><Trash2 className="w-3 h-3"/></button>
+                                      </div>
+                                  </div>
+                              ))
+                          )}
+                      </div>
+                  )}
+
+                  {profileSection === 'notes' && (
+                      <div className="space-y-4 animate-in slide-in-from-right duration-300">
+                          <div className="flex gap-2">
+                              <Input 
+                                value={noteInput} 
+                                onChange={e => setNoteInput(e.target.value)} 
+                                onKeyDown={e => e.key === 'Enter' && handleAddNote()}
+                                placeholder="Add a note to this chat..." 
+                                className="bg-[#2a3942] border-none text-white text-sm"
+                              />
+                              <Button onClick={handleAddNote} className="bg-teal-500 hover:bg-teal-600"><PlusCircle className="w-4 h-4" /></Button>
+                          </div>
+                          
+                          <div className="relative pl-6 border-l border-white/10 ml-2 space-y-6 py-4">
+                              {(contactNotes[activeContact.id] || []).length === 0 ? (
+                                  <p className="text-center text-[#8696a0] text-xs italic py-10 ml-[-24px]">Start building the timeline...</p>
+                              ) : (
+                                  contactNotes[activeContact.id].map(note => (
+                                      <div key={note.id} className="relative">
+                                          <div className="absolute -left-[29px] top-1 w-2 h-2 rounded-full bg-teal-500 ring-4 ring-[#0b141a]" />
+                                          <div className="bg-[#202c33] p-4 rounded-2xl border border-white/5 shadow-xl group">
+                                              <p className="text-[#e9edef] text-sm whitespace-pre-wrap">{note.content}</p>
+                                              <div className="mt-2 flex justify-between items-center opacity-40 group-hover:opacity-100 transition-opacity">
+                                                  <div className="flex items-center gap-2 text-[9px] uppercase font-bold tracking-tighter">
+                                                      <Calendar className="w-3 h-3 text-teal-500" />
+                                                      {new Date(note.timestamp).toLocaleDateString()}
+                                                  </div>
+                                                  <button onClick={() => sdk.deleteNote(note.id, activeContact.id)} className="p-1 hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
+                                              </div>
+                                          </div>
+                                      </div>
+                                  ))
+                              )}
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </ScrollArea>
+      </div>
+  ) : null;
+
   return (
     <TooltipProvider>
-      <ChatLayout sidebar={renderSidebar} activeChat={renderChat} isConnected={status === "Connected"} />
+      <ChatLayout sidebar={renderSidebar} activeChat={renderChat} rightSidebar={renderProfile} isConnected={status === "Connected"} />
       <audio ref={remoteAudioRef} className="fixed bottom-0 left-0 w-1 h-1 opacity-0 pointer-events-none" playsInline autoPlay />
+
       
       <CallModal 
           isOpen={callState.isOpen}
@@ -796,6 +949,23 @@ function Home() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={isNewTabOpen} onOpenChange={setIsNewTabOpen}>
+        <DialogContent className="sm:max-w-[425px] bg-[#202c33] border-gray-700 text-[#e9edef]">
+          <DialogHeader><DialogTitle>Create Custom Group</DialogTitle></DialogHeader>
+          <div className="py-4 flex flex-col gap-4">
+              <Label className="text-xs text-[#8696a0]">Group Name</Label>
+              <Input 
+                  value={newTabName} 
+                  onChange={(e) => setNewTabName(e.target.value)} 
+                  placeholder="e.g. Work, Family, Clients"
+                  className="bg-[#2a3942] border-gray-600 text-white" 
+                  onKeyDown={(e) => e.key === 'Enter' && handleCreateTab()}
+              />
+          </div>
+          <DialogFooter><Button onClick={handleCreateTab} className="bg-[#00a884] hover:bg-[#008f6f]">Create Group</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Connectivity Debugger */}
       {callState.isOpen && (
           <div className="fixed top-4 right-4 bg-black/80 text-white p-2 text-xs rounded z-50 max-w-xs font-mono border border-gray-700 shadow-xl">
@@ -813,3 +983,7 @@ function Home() {
     </TooltipProvider>
   );
 }
+
+export const Route = createFileRoute('/')({
+  component: Home,
+});

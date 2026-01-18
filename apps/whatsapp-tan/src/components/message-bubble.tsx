@@ -20,6 +20,7 @@ interface MessageBubbleProps {
   onAddNote?: (content: string) => void;
   onQuoteClick?: (id: string) => void;
   onSendMessage?: (content: string) => void;
+  onStar?: () => void;
   allMessages?: Message[];
   isHighlighted?: boolean;
 }
@@ -192,6 +193,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     onReply, 
     onReact, 
     onAddNote,
+    onStar,
     onQuoteClick,
     onSendMessage,
     allMessages = [],
@@ -199,6 +201,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const isMe = message.direction === "outgoing";
+  const isStarred = message.is_starred;
   const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase();
   
   const quotedMessage = message.context?.message_id 
@@ -244,6 +247,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                     <ChevronDown className="w-4 h-4" />
                 </div>
 
+                {isStarred && (
+                    <div className="absolute -left-1 top-1 text-teal-500 animate-in zoom-in duration-300">
+                        <Star className="w-3 h-3 fill-current" />
+                    </div>
+                )}
+
                 {isDropdownOpen && (
                     <div className="absolute top-6 right-1 bg-[#232d36] rounded-xl shadow-2xl py-1.5 min-w-[160px] z-50 border border-white/5 animate-in fade-in zoom-in-95 duration-200">
                         <button onClick={() => { onReply(message); setIsDropdownOpen(false); }} className="w-full text-left px-4 py-2 text-sm hover:bg-[#2a3942] transition-colors flex items-center gap-3">
@@ -254,6 +263,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                         </button>
                         <button onClick={() => { onAddNote?.(message.content); setIsDropdownOpen(false); }} className="w-full text-left px-4 py-2 text-sm hover:bg-[#2a3942] transition-colors flex items-center gap-3">
                             <BookMarked className="w-3.5 h-3.5 text-teal-500" /> Add to Note
+                        </button>
+                        <button onClick={() => { onStar?.(); setIsDropdownOpen(false); }} className="w-full text-left px-4 py-2 text-sm hover:bg-[#2a3942] transition-colors flex items-center gap-3">
+                            <Star className={`w-3.5 h-3.5 ${isStarred ? 'text-teal-500 fill-teal-500' : 'text-gray-400'}`} /> {isStarred ? 'Unstar' : 'Star'}
                         </button>
                         <hr className="my-1 border-white/5" />
                         <button className="w-full text-left px-4 py-2 text-sm hover:bg-[#2a3942] transition-colors text-red-500 flex items-center gap-3">
@@ -424,9 +436,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                     <Pin className="w-4 h-4 text-gray-400 group-hover/item:text-white" />
                     <span className="text-[14px] font-medium">Pin</span>
                 </ContextMenuItem>
-                <ContextMenuItem className="flex items-center gap-4 px-3 py-2.5 rounded-xl hover:bg-[#2a3942] cursor-pointer transition-colors group/item">
-                    <Star className="w-4 h-4 text-gray-400 group-hover/item:text-white" />
-                    <span className="text-[14px] font-medium">Star</span>
+                <ContextMenuItem onClick={() => onStar?.()} className="flex items-center gap-4 px-3 py-2.5 rounded-xl hover:bg-[#2a3942] cursor-pointer transition-colors group/item">
+                    <Star className={`w-4 h-4 ${isStarred ? 'text-teal-500 fill-teal-500' : 'text-gray-400 group-hover/item:text-white'}`} />
+                    <span className="text-[14px] font-medium">{isStarred ? 'Unstar' : 'Star'}</span>
                 </ContextMenuItem>
                 
                 <ContextMenuSeparator className="bg-white/5 my-1" />

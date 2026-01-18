@@ -94,10 +94,12 @@ export const storage = {
 
         const contactId = message.direction === 'incoming' ? message.from : message.to;
         
-        // Update last_user_msg_timestamp if incoming
+        // Update last_user_msg_timestamp and increment unread_count if incoming
         if (message.direction === 'incoming') {
              const updateTimestamp = db.prepare(`
-                UPDATE contacts SET last_user_msg_timestamp = $timestamp 
+                UPDATE contacts SET 
+                    last_user_msg_timestamp = $timestamp,
+                    unread_count = unread_count + 1
                 WHERE id = $id
              `);
              updateTimestamp.run({ $timestamp: message.timestamp, $id: contactId });
@@ -149,6 +151,7 @@ export const storage = {
             timestamp: m.timestamp,
             status: m.status as any,
             direction: m.direction as any,
+            is_starred: !!m.is_starred,
             context: m.context_id ? { message_id: m.context_id } : undefined,
             reactions: Object.keys(reactionMap).length > 0 ? reactionMap : undefined
         };
@@ -177,6 +180,7 @@ export const storage = {
             timestamp: m.timestamp,
             status: m.status as any,
             direction: m.direction as any,
+            is_starred: !!m.is_starred,
             context: m.context_id ? { message_id: m.context_id } : undefined,
             reactions: Object.keys(reactionMap).length > 0 ? reactionMap : undefined
         };
@@ -207,7 +211,8 @@ export const storage = {
                 content: lastMsg.content,
                 timestamp: lastMsg.timestamp,
                 status: lastMsg.status,
-                direction: lastMsg.direction
+                direction: lastMsg.direction,
+                is_starred: !!lastMsg.is_starred
              };
          }
          return {
@@ -216,8 +221,10 @@ export const storage = {
              pushName: c.push_name,
              customName: c.custom_name,
              isFavorite: !!c.is_favorite,
+             tabId: c.tab_id,
              lastMessage: lm,
-             lastUserMsgTimestamp: c.last_user_msg_timestamp
+             lastUserMsgTimestamp: c.last_user_msg_timestamp,
+             unreadCount: c.unread_count || 0
          };
     });
     
@@ -265,8 +272,16 @@ export const storage = {
   },
 
   async updateMessageStatus(id: string, status: Message['status']) {
+    const prev = db.prepare("SELECT status, from_id, direction FROM messages WHERE id = $id").get({ $id: id }) as any;
+    
     const stmt = db.prepare("UPDATE messages SET status = $status WHERE id = $id");
     stmt.run({ $status: status, $id: id });
+
+    // If message was incoming and marked as read, decrement unread_count
+    if (status === 'read' && prev && prev.direction === 'incoming' && prev.status !== 'read') {
+        db.prepare("UPDATE contacts SET unread_count = MAX(0, unread_count - 1) WHERE id = $id")
+          .run({ $id: prev.from_id });
+    }
   },
 
   async addReaction(id: string, from: string, emoji: string) {
@@ -276,6 +291,75 @@ export const storage = {
         VALUES ($id, $from, $emoji)
       `);
       stmt.run({ $id: id, $from: from, $emoji: emoji });
+  },
+
+  async getTabs(): Promise<any[]> {
+      const tabs = db.prepare("SELECT * FROM chat_tabs ORDER BY sort_order ASC").all() as any[];
+      if (tabs.length === 0) {
+          // Initialize defaults
+          const init = db.transaction(() => {
+              db.prepare("INSERT INTO chat_tabs (id, name, type, sort_order) VALUES ('all', 'All', 'system', 0)").run();
+              db.prepare("INSERT INTO chat_tabs (id, name, type, sort_order) VALUES ('favs', 'Favorites', 'system', 1)").run();
+          });
+          init();
+          return this.getTabs();
+      }
+      return tabs;
+  },
+
+  async createTab(name: string): Promise<{ id: string, name: string }> {
+      const id = name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now();
+      db.prepare("INSERT INTO chat_tabs (id, name, type, sort_order) SELECT $id, $name, 'custom', COALESCE(MAX(sort_order), 0) + 1 FROM chat_tabs")
+        .run({ $id: id, $name: name });
+      return { id, name };
+  },
+
+  async deleteTab(id: string): Promise<void> {
+      db.prepare("DELETE FROM chat_tabs WHERE id = $id AND type = 'custom'").run({ $id: id });
+  },
+
+  async assignContactToTab(contactId: string, tabId: string | null) {
+      db.prepare("UPDATE contacts SET tab_id = $tabId WHERE id = $contactId").run({ $tabId: tabId, $contactId: contactId });
+  },
+
+  async toggleMessageStar(messageId: string, isStarred: boolean) {
+      db.prepare("UPDATE messages SET is_starred = $isStarred WHERE id = $id").run({ $isStarred: isStarred ? 1 : 0, $id: messageId });
+  },
+
+  async getStarredMessages(contactId: string) {
+      const msgs = db.prepare(`
+          SELECT * FROM messages 
+          WHERE (from_id = $contactId OR to_id = $contactId) 
+          AND is_starred = 1 
+          ORDER BY timestamp DESC
+      `).all({ $contactId: contactId }) as any[];
+
+      return msgs.map(m => ({
+          id: m.id,
+          from: m.from_id,
+          to: m.to_id,
+          type: m.type as any,
+          content: m.content,
+          timestamp: m.timestamp,
+          status: m.status as any,
+          direction: m.direction as any,
+          is_starred: true
+      }));
+  },
+
+  async getNotes(contactId: string) {
+      return db.prepare("SELECT * FROM notes WHERE contact_id = $contactId ORDER BY timestamp DESC").all({ $contactId: contactId }) as any[];
+  },
+
+  async addNote(contactId: string, content: string) {
+      const id = Math.random().toString(36).substr(2, 9);
+      db.prepare("INSERT INTO notes (id, contact_id, content, timestamp) VALUES ($id, $contactId, $content, $timestamp)")
+        .run({ $id: id, $contactId: contactId, $content: content, $timestamp: Date.now() });
+      return { id, contact_id: contactId, content, timestamp: Date.now() };
+  },
+
+  async deleteNote(noteId: string) {
+      db.prepare("DELETE FROM notes WHERE id = $id").run({ $id: noteId });
   },
 
   async updateMessageId(oldId: string, newId: string) {

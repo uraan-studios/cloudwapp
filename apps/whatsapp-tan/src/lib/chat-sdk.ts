@@ -104,6 +104,18 @@ export class ChatSDK extends BaseSDK {
                 });
                 break;
             
+            case "tabs":
+                this.emit("tabs", data);
+                break;
+
+            case "notes":
+                this.emit("notes", raw);
+                break;
+            
+            case "starred_messages":
+                this.emit("starred_messages", raw);
+                break;
+            
             case "error":
                 this.emit("error", data.message);
                 break;
@@ -171,6 +183,38 @@ export class ChatSDK extends BaseSDK {
         this.chat?.send({ type: 'call_reject', callId });
     }
 
+    public createTab(name: string) {
+        this.chat?.send({ type: 'create_tab', name });
+    }
+
+    public deleteTab(id: string) {
+        this.chat?.send({ type: 'delete_tab', id });
+    }
+
+    public getNotes(contactId: string) {
+        this.chat?.send({ type: 'get_notes', contactId });
+    }
+
+    public addNote(contactId: string, content: string) {
+        this.chat?.send({ type: 'add_note', contactId, content });
+    }
+
+    public deleteNote(noteId: string, contactId: string) {
+        this.chat?.send({ type: 'delete_note', id: noteId, contactId });
+    }
+
+    public getStarredMessages(contactId: string) {
+        this.chat?.send({ type: 'get_starred_messages', contactId });
+    }
+
+    public starMessage(messageId: string, isStarred: boolean) {
+        this.chat?.send({ type: 'star_message', id: messageId, isStarred });
+    }
+
+    public assignContactToTab(contactId: string, tabId: string | null) {
+        this.chat?.send({ type: 'assign_contact_tab', contactId, tabId });
+    }
+
     public close() {
         this.chat?.close();
     }
@@ -193,6 +237,9 @@ export function useChat() {
     const [nextCursor, setNextCursor] = useState<number | null>(null);
     const [hasMore, setHasMore] = useState(false);
     const [callEvent, setCallEvent] = useState<any | null>(null);
+    const [tabs, setTabs] = useState<any[]>([]);
+    const [contactNotes, setContactNotes] = useState<Record<string, any[]>>({});
+    const [starredMessages, setStarredMessages] = useState<Record<string, any[]>>({});
 
     useEffect(() => {
         // Sync initial messages if there's an active contact
@@ -203,24 +250,33 @@ export function useChat() {
         const onContacts = (c: Contact[]) => setContacts([...c]);
         const onMessages = (m: Message[]) => setMessages([...m]);
         const onStatus = (s: string) => setStatus(s);
+        const onTabs = (t: any[]) => setTabs(t);
         const onMessagesLoaded = ({ nextCursor: cursor }: any) => {
             setNextCursor(cursor);
             setHasMore(!!cursor);
         };
         const onCallEvent = (event: any) => setCallEvent(event);
+        const onNotes = ({ contactId, data }: any) => setContactNotes(prev => ({ ...prev, [contactId]: data }));
+        const onStarredMessages = ({ contactId, data }: any) => setStarredMessages(prev => ({ ...prev, [contactId]: data }));
 
         sdk.on("contacts", onContacts);
         sdk.on("messages", onMessages);
         sdk.on("status", onStatus);
+        sdk.on("tabs", onTabs);
         sdk.on("messages_loaded", onMessagesLoaded);
         sdk.on("call_event", onCallEvent);
+        sdk.on("notes", onNotes);
+        sdk.on("starred_messages", onStarredMessages);
 
         return () => {
             sdk.off("contacts", onContacts);
             sdk.off("messages", onMessages);
             sdk.off("status", onStatus);
+            sdk.off("tabs", onTabs);
             sdk.off("messages_loaded", onMessagesLoaded);
             sdk.off("call_event", onCallEvent);
+            sdk.off("notes", onNotes);
+            sdk.off("starred_messages", onStarredMessages);
         };
     }, [sdk]);
 
@@ -250,6 +306,9 @@ export function useChat() {
         loadMore,
         hasMore,
         sdk,
-        callEvent
+        callEvent,
+        tabs,
+        contactNotes,
+        starredMessages
     };
 }

@@ -19,6 +19,7 @@ export interface Message {
   status: "sent" | "delivered" | "read" | "failed";
   direction: "incoming" | "outgoing";
   reactions?: Record<string, string>;
+  is_starred?: boolean;
   context?: { message_id: string };
   // Add some metadata for specific types
   metadata?: {
@@ -38,9 +39,11 @@ export interface Contact {
   pushName?: string;
   customName?: string;
   isFavorite?: boolean;
+  tabId?: string;
   lastMessage?: Message;
   lastUserMsgTimestamp?: number;
   profilePic?: string;
+  unreadCount?: number;
 }
 
 export interface CallEvent {
@@ -55,9 +58,17 @@ export interface CallEvent {
   };
 }
 
+export interface Tab {
+  id: string;
+  name: string;
+  type: 'system' | 'custom';
+  sort_order: number;
+}
+
 export interface WhatsAppEvents {
   "status": (status: "Connected" | "Disconnected" | "Connecting") => void;
   "contacts": (contacts: Contact[]) => void;
+  "tabs": (tabs: Tab[]) => void;
   "contact_update": (contact: Contact) => void;
   "message": (message: Message) => void;
   "messages": (messages: Message[]) => void;

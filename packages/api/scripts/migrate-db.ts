@@ -13,8 +13,8 @@ async function migrate() {
         const json = JSON.parse(data);
         
         const insertMessage = db.prepare(`
-            INSERT OR IGNORE INTO messages (id, from_id, to_id, type, content, timestamp, status, direction, context_id)
-            VALUES ($id, $from, $to, $type, $content, $timestamp, $status, $direction, $context_id)
+            INSERT OR IGNORE INTO messages (id, from_id, to_id, type, content, timestamp, status, direction, context_id, is_starred)
+            VALUES ($id, $from, $to, $type, $content, $timestamp, $status, $direction, $context_id, $is_starred)
         `);
 
         const insertReaction = db.prepare(`
@@ -23,18 +23,23 @@ async function migrate() {
         `);
 
         const insertContact = db.prepare(`
-            INSERT OR IGNORE INTO contacts (id, name)
-            VALUES ($id, $name)
+            INSERT OR IGNORE INTO contacts (id, name, is_favorite, tab_id)
+            VALUES ($id, $name, $is_favorite, $tab_id)
         `);
 
         db.transaction(() => {
             // Contacts
-            for (const contact of json.contacts) {
-                insertContact.run({ $id: contact.id, $name: contact.name || contact.id });
+            for (const contact of json.contacts || []) {
+                insertContact.run({ 
+                    $id: contact.id, 
+                    $name: contact.name || contact.id,
+                    $is_favorite: contact.isFavorite ? 1 : 0,
+                    $tab_id: contact.tabId || null
+                });
             }
 
             // Messages
-            for (const msg of json.messages) {
+            for (const msg of json.messages || []) {
                 insertMessage.run({
                     $id: msg.id,
                     $from: msg.from,
@@ -44,7 +49,8 @@ async function migrate() {
                     $timestamp: msg.timestamp,
                     $status: msg.status,
                     $direction: msg.direction,
-                    $context_id: msg.context?.message_id || null
+                    $context_id: msg.context?.message_id || null,
+                    $is_starred: msg.isStarred ? 1 : 0
                 });
 
                 // Reactions

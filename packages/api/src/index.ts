@@ -233,8 +233,12 @@ const app = new Elysia()
         console.log("WS Opened");
         ws.subscribe("chat");
         try {
-            const contacts = await storage.getContacts();
+            const [contacts, tabs] = await Promise.all([
+                storage.getContacts(),
+                storage.getTabs()
+            ]);
             ws.send(JSON.stringify({ type: "contacts", data: contacts }));
+            ws.send(JSON.stringify({ type: "tabs", data: tabs }));
         } catch (e) {
             console.error("Error in WS open:", e);
         }
@@ -252,6 +256,45 @@ const app = new Elysia()
                 data: msgs,
                 nextCursor
             }));
+        }
+        else if (message.type === 'create_tab') {
+            const tab = await storage.createTab(message.name);
+            const allTabs = await storage.getTabs();
+            app.server?.publish("chat", JSON.stringify({ type: "tabs", data: allTabs }));
+            ws.send(JSON.stringify({ type: "tabs", data: allTabs }));
+        }
+        else if (message.type === 'delete_tab') {
+            await storage.deleteTab(message.id);
+            const allTabs = await storage.getTabs();
+            app.server?.publish("chat", JSON.stringify({ type: "tabs", data: allTabs }));
+            ws.send(JSON.stringify({ type: "tabs", data: allTabs }));
+        }
+        else if (message.type === 'get_starred_messages') {
+            const msgs = await storage.getStarredMessages(message.contactId);
+            ws.send(JSON.stringify({ type: 'starred_messages', contactId: message.contactId, data: msgs }));
+        }
+        else if (message.type === 'get_notes') {
+            const notes = await storage.getNotes(message.contactId);
+            ws.send(JSON.stringify({ type: 'notes', contactId: message.contactId, data: notes }));
+        }
+        else if (message.type === 'add_note') {
+            const note = await storage.addNote(message.contactId, message.content);
+            const allNotes = await storage.getNotes(message.contactId);
+            ws.send(JSON.stringify({ type: 'notes', contactId: message.contactId, data: allNotes }));
+        }
+        else if (message.type === 'delete_note') {
+            await storage.deleteNote(message.id);
+            const allNotes = await storage.getNotes(message.contactId);
+            ws.send(JSON.stringify({ type: 'notes', contactId: message.contactId, data: allNotes }));
+        }
+        else if (message.type === 'star_message') {
+            await storage.toggleMessageStar(message.id, message.isStarred);
+        }
+        else if (message.type === 'assign_contact_tab') {
+            await storage.assignContactToTab(message.contactId, message.tabId);
+            const contacts = await storage.getContacts();
+            app.server?.publish("chat", JSON.stringify({ type: "contacts", data: contacts }));
+            ws.send(JSON.stringify({ type: "contacts", data: contacts }));
         }
         else if (message.type === 'update_contact') {
             const { contactId, name } = message;

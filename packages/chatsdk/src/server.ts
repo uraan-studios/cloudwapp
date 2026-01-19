@@ -328,4 +328,64 @@ export class MetaClient {
   async getSettings() {
     return this.fetchAPI(`${this.phoneNumberId}/settings?fields=calling`, { method: "GET" });
   }
+
+  async getBusinessProfile() {
+    return this.fetchAPI(`${this.phoneNumberId}/whatsapp_business_profile?fields=about,address,description,email,profile_picture_url,websites,vertical`, { method: "GET" });
+  }
+
+  async updateBusinessProfile(data: any) {
+    const body = {
+        messaging_product: "whatsapp",
+        ...data
+    };
+    return this.fetchAPI(`${this.phoneNumberId}/whatsapp_business_profile`, {
+        method: "POST",
+        body: JSON.stringify(body),
+    });
+  }
+
+  async updateProfilePicture(fileContent: Buffer, mimeType: string) {
+    try {
+        // Step 1: Start Resumable Upload Session
+        const sessionRes = await fetch(`${META_API_URL}/app/uploads?file_length=${fileContent.length}&file_type=${mimeType}&access_token=${this.accessToken}`, {
+            method: "POST"
+        });
+        
+        if (!sessionRes.ok) {
+            const err = await sessionRes.json();
+            console.error("[Meta SDK] Failed to start upload session:", err);
+            return { error: err };
+        }
+        
+        const sessionData = await sessionRes.json();
+        const uploadId = (sessionData as any).id;
+
+        // Step 2: Upload File Content
+        const uploadRes = await fetch(`${META_API_URL}/${uploadId}`, {
+            method: "POST",
+            headers: {
+                "Authorization": `OAuth ${this.accessToken}`,
+                "file_offset": "0"
+            },
+            body: fileContent
+        });
+
+        if (!uploadRes.ok) {
+            const err = await uploadRes.json();
+             console.error("[Meta SDK] Failed to upload file content:", err);
+            return { error: err };
+        }
+
+        const uploadData = await uploadRes.json();
+        const handle = (uploadData as any).h;
+
+        // Step 3: Update Profile Picture with Handle
+        return this.updateBusinessProfile({ profile_picture_handle: handle });
+
+    } catch (e) {
+        console.error("[Meta SDK] Profile Picture Update Error:", e);
+        return { error: e };
+    }
+  }
+
 }

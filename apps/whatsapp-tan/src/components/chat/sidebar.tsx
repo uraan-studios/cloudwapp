@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { SearchBar } from "../sidebar/search-bar";
 import { TabsList } from "../sidebar/tabs-list";
-import { Search, MessageSquarePlus, Star, Edit2, LayoutList, Trash2, Info, MoreVertical } from "lucide-react";
+import { Search, MessageSquarePlus, Star, Edit2, LayoutList, Trash2, Info, MoreVertical, LogOut, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useChat } from "../../lib/chat-sdk";
+import { ProfileSettingsSidebar } from "./profile-sidebar";
 
 const ChatTooltip = ({ label, children }: { label: string, children: React.ReactNode }) => (
     <Tooltip>
@@ -45,6 +46,7 @@ export function ChatSidebar({ chatData, onProfileOpen }: ChatSidebarProps) {
     const [renameValue, setRenameValue] = useState("");
     const [isNewTabOpen, setIsNewTabOpen] = useState(false);
     const [newTabName, setNewTabName] = useState("");
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
     const getDisplayName = (c: any) => c.customName || c.pushName || c.name || c.id;
 
@@ -89,18 +91,52 @@ export function ChatSidebar({ chatData, onProfileOpen }: ChatSidebarProps) {
         if (activeTab === id) setActiveTab("all");
     };
 
+    if (isSettingsOpen) {
+        return <ProfileSettingsSidebar onBack={() => setIsSettingsOpen(false)} chatData={chatData} />;
+    }
+
     return (
         <div className="flex flex-col h-full">
-            <div className="flex items-center gap-2 px-4 py-2">
+            <div className="h-16 bg-[#202c33] flex items-center justify-between px-4 shrink-0 border-r border-[#202c33]">
+                <div className="flex items-center gap-3">
+                    <div onClick={() => setIsSettingsOpen(true)} className="cursor-pointer">
+                        <Avatar className="w-10 h-10 hover:opacity-80 transition-opacity">
+                            <AvatarImage src="https://github.com/shadcn.png" />
+                            <AvatarFallback>ME</AvatarFallback>
+                        </Avatar>
+                    </div>
+                    <div className="flex flex-col">
+                        <span className="text-[#e9edef] font-medium text-sm">CloudWapp</span>
+                        <div className="flex items-center gap-1.5 ">
+                             <div className={`w-2 h-2 rounded-full ${status === 'Connected' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-red-500'} transition-all duration-500`}></div>
+                            <span className="text-[10px] text-[#8696a0] font-bold uppercase tracking-widest opacity-70">{status === 'Connected' ? 'Online' : 'Offline'}</span>
+                        </div>
+                    </div>
+                </div>
+                <div className="flex gap-4 text-[#aebac1]">
+                    <ChatTooltip label="New Chat">
+                        <button onClick={() => setIsNewChatOpen(true)}><MessageSquarePlus className="w-5 h-5" /></button>
+                    </ChatTooltip>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger>
+                            <MoreVertical className="w-5 h-5" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-[#233138] border-white/5 text-[#d9dee0]">
+                            <DropdownMenuItem onClick={() => setIsNewTabOpen(true)}>New Group</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setIsSettingsOpen(true)} className="gap-2 cursor-pointer">
+                                <Settings className="w-4 h-4" /> Settings
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator className="bg-white/10" />
+                            <DropdownMenuItem className="text-red-400 gap-2 cursor-pointer">
+                                <LogOut className="w-4 h-4" /> Log out
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                </div>
+            </div>
+            
+            <div className="flex items-center gap-2 px-3 py-2">
                 <SearchBar value={searchQuery} onChange={setSearchQuery} />
-                <ChatTooltip label="New Chat">
-                <button 
-                    onClick={() => setIsNewChatOpen(true)}
-                    className="w-10 h-10 flex items-center justify-center bg-[#202c33] hover:bg-[#2a3942] text-teal-500 rounded-lg transition-all active:scale-95 shadow-lg border border-white/5 shrink-0"
-                >
-                    <MessageSquarePlus className="w-5 h-5" />
-                </button>
-                </ChatTooltip>
             </div>
             <TabsList 
                 activeTab={activeTab} 
@@ -125,7 +161,7 @@ export function ChatSidebar({ chatData, onProfileOpen }: ChatSidebarProps) {
                                 <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#111b21] ${status === 'Connected' ? 'bg-green-500' : 'bg-gray-500'}`} />
                                 </Avatar>
                                 <div className="flex-1 min-w-0 pr-1">
-                                <div className="flex justify-between items-baseline mb-1">
+                                <div className="flex justify-between items-baseline mb-0">
                                     <div className="flex items-center gap-1.5 truncate">
                                     <span className="text-[#e9edef] text-[15.5px] font-medium truncate">{getDisplayName(c)}</span>
                                     {c.isFavorite && <Star className="w-3 h-3 text-teal-500 fill-teal-500" />}

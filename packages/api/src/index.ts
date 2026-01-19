@@ -234,7 +234,21 @@ const app = new Elysia()
     return "OK";
   })
 
+
+  .get("/settings/profile", async () => {
+    return await meta.getBusinessProfile();
+  })
+  .post("/settings/profile", async ({ body }) => {
+    return await meta.updateBusinessProfile(body);
+  })
+  .post("/settings/profile-photo", async ({ body }) => {
+    const file = (body as any).file;
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    return await meta.updateProfilePicture(buffer, file.type);
+  })
   .ws("/chat", {
+
     body: t.Any(),
     response: t.Any(),
     async open(ws) {

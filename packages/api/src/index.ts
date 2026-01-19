@@ -4,8 +4,16 @@ import { join } from "node:path";
 import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { storage } from "./services/storage";
-import { meta } from "./services/meta";
+
 import { ChatSDK, type Message, type Contact, type CallEvent } from "@repo/chatsdk";
+import { MetaClient } from "@repo/chatsdk/src/server";
+
+
+const meta = new MetaClient({
+    accessToken: process.env.META_ACCESS_TOKEN || "",
+    phoneNumberId: process.env.META_PHONE_NUMBER_ID || "",
+    wabaId: process.env.META_WABA_ID
+});
 
 // Ensure temp directory exists
 const TEMP_DIR = join(import.meta.dir, "../temp_uploads");
